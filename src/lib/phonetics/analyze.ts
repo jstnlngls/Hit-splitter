@@ -2,7 +2,7 @@ import { soundOf, type Sound, type Stress, type Vowel } from './arpabet'
 import type { Lexicon } from './lexicon'
 import { pronounce, type Pronunciation, type PronunciationSource } from './pronounce'
 import { splitSpelling } from './spelling'
-import { syllabifyPhones } from './syllabify'
+import { syllabifyPhones, type PhoneSyllable } from './syllabify'
 import { tokenizeLyrics, type LineToken } from './tokenize'
 
 export interface Syllable {
@@ -85,42 +85,49 @@ const FUNCTION_WORDS = new Set(
   ).split(' '),
 )
 
-let cache = new Map<string, Pronunciation>()
+interface WordShape {
+  pron: Pronunciation
+  syllables: PhoneSyllable[]
+  chunks: string[]
+}
+
+// Word shapes depend only on the token and the dictionary, so re-analysis on
+// every keystroke only pays for words it has not seen yet.
+let cache = new Map<string, WordShape>()
 let cachedFor: Lexicon | null | undefined
 
-function pronounceCached(text: string, lex: Lexicon | null, acronym: boolean): Pronunciation {
+const SHORT_VOWELS = new Set(['AE', 'EH', 'IH', 'AA', 'AH', 'UH'])
+
+const closedSyllables = (syllables: PhoneSyllable[]) => syllables.map((s) => s.stress > 0 && SHORT_VOWELS.has(s.vowel))
+
+function shapeOf(text: string, lex: Lexicon | null, acronym: boolean): WordShape {
   if (cachedFor !== lex) {
     cache = new Map()
     cachedFor = lex
   }
-  const key = acronym ? `#${text}` : text.toLowerCase()
-  let found = cache.get(key)
-  if (!found) {
-    found = pronounce(text, lex, acronym)
-    cache.set(key, found)
+  const key = acronym ? `#${text}` : text
+  let shape = cache.get(key)
+  if (!shape) {
+    const pron = pronounce(text, lex, acronym)
+    const syllables = syllabifyPhones(pron.phones)
+    shape = { pron, syllables, chunks: chunksFor(text, pron, syllables, lex) }
+    cache.set(key, shape)
   }
-  return found
+  return shape
 }
 
-const SHORT_VOWELS = new Set(['AE', 'EH', 'IH', 'AA', 'AH', 'UH'])
-
-const closedSyllables = (phones: string[]) =>
-  syllabifyPhones(phones).map((s) => s.stress > 0 && SHORT_VOWELS.has(s.vowel))
-
 /** Written chunks for a pronunciation, so blocks read like the lyric. */
-function chunksFor(text: string, pron: Pronunciation, count: number, lex: Lexicon | null): string[] {
-  if (!pron.spoken) return splitSpelling(text, count, closedSyllables(pron.phones))
+function chunksFor(text: string, pron: Pronunciation, syllables: PhoneSyllable[], lex: Lexicon | null): string[] {
+  const count = syllables.length
+  if (!pron.spoken) return splitSpelling(text, count, closedSyllables(syllables))
   if (pron.source === 'letters') {
-    // One chunk per letter; a letter with two syllables (W) repeats a dot.
-    return pron.spoken.flatMap((letter) => {
-      const size = letter === 'W' ? 3 : 1
-      return [letter, ...Array(size - 1).fill('·')]
-    }).slice(0, count)
+    // One chunk per letter; W takes three syllables.
+    return pron.spoken.flatMap((letter) => (letter === 'W' ? [letter, '·', '·'] : [letter])).slice(0, count)
   }
   // Numbers: show the spoken words' syllables ("twen", "ty", "four").
   return pron.spoken.flatMap((w) => {
-    const phones = pronounceCached(w, lex, false).phones
-    return splitSpelling(w, Math.max(1, syllabifyPhones(phones).length), closedSyllables(phones))
+    const shape = shapeOf(w, lex, false)
+    return shape.chunks.length ? shape.chunks : [w]
   })
 }
 
@@ -151,8 +158,7 @@ export function analyzeLyrics(text: string, lex: Lexicon | null): LyricsAnalysis
 
     const lastMain = line.words.findLastIndex((w) => !w.adlib)
     line.words.forEach((token, t) => {
-      const pron = pronounceCached(token.text, lex, token.acronym)
-      const phoneSyllables = syllabifyPhones(pron.phones)
+      const { pron, syllables: phoneSyllables, chunks } = shapeOf(token.text, lex, token.acronym)
       if (phoneSyllables.length === 0) return
       const norm = token.text.toLowerCase().replace(/[’‘`]/g, "'")
       const word: Word = {
@@ -172,7 +178,6 @@ export function analyzeLyrics(text: string, lex: Lexicon | null): LyricsAnalysis
       words.push(word)
       bar.words.push(word.id)
 
-      const chunks = chunksFor(token.text, pron, phoneSyllables.length, lex)
       let cursor = token.start
       phoneSyllables.forEach((ps, k) => {
         const chunk = chunks[k] ?? '·'

@@ -22,25 +22,45 @@ const CODES = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!#$
 
 const WORD = /^'?[a-z][a-z']*$/
 
-const syllableCount = (pron: string) => pron.split(' ').filter((p) => /\d$/.test(p)).length
-
 // A few entries carry trailing notes such as "# place, danish".
 const stripNote = (pron: string) => pron.split('#')[0].trim()
+
+const LONG_VOWEL = /^(AY|AW|UW|AO|OW|OY)1$/
+
+/**
+ * Whether `alt` is the everyday contraction of `first` that rappers use:
+ * "fire" F AY1 ER0 → F AY1 R, "jewel" JH UW1 AH0 L → JH UW1 L,
+ * "hustling" HH AH1 S AH0 L IH0 NG → HH AH1 S L IH0 NG.
+ */
+export function isEverydayVariant(first: string[], alt: string[]): boolean {
+  const target = alt.join(' ')
+  for (let i = 1; i < first.length; i++) {
+    if (first[i] === 'ER0' && LONG_VOWEL.test(first[i - 1])) {
+      if ([...first.slice(0, i), 'R', ...first.slice(i + 1)].join(' ') === target) return true
+    }
+    if (first[i] === 'AH0' && first[i + 1] === 'L') {
+      const ending = first.slice(i + 2).join(' ')
+      if (LONG_VOWEL.test(first[i - 1]) || /^(IH0 NG|ER0)( Z)?$/.test(ending)) {
+        if ([...first.slice(0, i), ...first.slice(i + 1)].join(' ') === target) return true
+      }
+    }
+  }
+  return false
+}
 
 export function buildCompactDictionary(dictionary: Record<string, string>): string {
   const codeFor = new Map(SYMBOLS.map((s, i) => [s, CODES[i]]))
   const lines = [SYMBOLS.join(' '), CODES.slice(0, SYMBOLS.length)]
   for (const word of Object.keys(dictionary)) {
     if (!WORD.test(word)) continue
-    // Keep the canonical pronunciation, except for short words like "fire",
-    // "our" and "hour" where a variant drops a syllable the way most people
-    // say (and rap) them.
+    // Keep the canonical pronunciation unless the dictionary also lists the
+    // contracted form most people say (and rap).
     let pron = stripNote(dictionary[word])
-    if (syllableCount(pron) <= 2) {
-      for (let i = 2; dictionary[`${word}(${i})`]; i++) {
-        const alt = dictionary[`${word}(${i})`]
-        if (alt.includes('#')) continue // regional or foreign variant
-        if (syllableCount(alt) < syllableCount(pron)) pron = alt
+    for (let i = 2; dictionary[`${word}(${i})`]; i++) {
+      const alt = dictionary[`${word}(${i})`]
+      if (!alt.includes('#') && isEverydayVariant(pron.split(' '), alt.split(' '))) {
+        pron = alt
+        break
       }
     }
     let encoded = ''

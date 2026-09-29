@@ -17,7 +17,7 @@ const VOICED = new Set(['b', 'd', 'g', 'l', 'm', 'n', 'r', 'v', 'w', 'z'])
 const UNSTRESSED_PREFIX = /^(be|de|re|pre|con|com|ex|un|dis|mis)[^aeiou]/
 
 /** Whether the letter at k acts as a vowel ("y" in "shawty" does, in "you" it does not). */
-function isVowelAt(w: string, k: number): boolean {
+export function isVowelAt(w: string, k: number): boolean {
   const c = w[k]
   if (c === undefined) return false
   if (c === 'y') return k > 0 && !'aeiou'.includes(w[k - 1])

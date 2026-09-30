@@ -4,6 +4,10 @@ A rhyme book and rhythm composer for writing rap. Type your lyrics and watch eve
 
 Everything runs in the browser. Lyrics, highlights and imported audio stay on your device.
 
+![The rhyme book beside the Flow view: each bar split into syllables on a 16-step grid, colored by rhyme sound](docs/flow-view.png)
+
+![The Rhymes view in dark mode: stats, a rhyme map of the whole song, and syllable blocks with scheme letters](docs/rhymes-view-dark.png)
+
 ## What it does
 
 **Write** — one line is one bar. `[Verse 1]`, `[Hook]` (or `Hook:`) start sections, blank lines separate them, and `(parentheses)` are ad-libs that ride on top of the bar instead of taking slots. The gutter shows each bar's number and syllable count, colored when a line is packed or spills over.

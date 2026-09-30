@@ -1485,10 +1485,12 @@ textarea {
   box-shadow: inset 0 2px 0 var(--beat-color);
 }
 
-.density {
+.vocal-map {
   width: 100%;
-  height: 56px;
   display: block;
+  border-radius: var(--radius-s);
+  background: var(--panel-2);
+  cursor: pointer;
 }
 
 .hint {

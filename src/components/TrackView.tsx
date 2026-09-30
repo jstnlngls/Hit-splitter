@@ -154,17 +154,66 @@ function MiniSteps({ slots, cols = 16 }: { slots: number[]; cols?: number }) {
   )
 }
 
-function Density({ values, startBar, lyricBars }: { values: number[]; startBar: number; lyricBars: number }) {
-  if (!values.length) return null
-  const max = Math.max(4, ...values)
-  const w = 100 / values.length
+/**
+ * The vocal-range rhythm of the whole track: each column is a bar, each row
+ * a 16th step, darker where a syllable-like onset lands. Repeating flows show
+ * up as repeating column shapes; the shaded band is where your lyrics sit.
+ */
+function VocalMap({ bars, startBar, lyricBars, onPlayFrom }: { bars: number[][]; startBar: number; lyricBars: number; onPlayFrom(lyricBar: number): void }) {
+  const canvas = useRef<HTMLCanvasElement>(null)
+  const themeVersion = useThemeVersion()
+  const [width, setWidth] = useState(600)
+  const height = 16 * 6
+
+  useEffect(() => {
+    const el = canvas.current
+    if (!el) return
+    const observer = new ResizeObserver(([entry]) => setWidth(Math.max(200, Math.round(entry.contentRect.width))))
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [])
+
+  useEffect(() => {
+    const el = canvas.current
+    const ctx = el?.getContext('2d')
+    if (!el || !ctx || !bars.length) return
+    const dpr = window.devicePixelRatio || 1
+    el.width = width * dpr
+    el.height = height * dpr
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+    ctx.clearRect(0, 0, width, height)
+    const css = getComputedStyle(el)
+    const color = (name: string) => css.getPropertyValue(name).trim() || '#888'
+    const w = width / bars.length
+    ctx.fillStyle = color('--accent-soft')
+    ctx.fillRect((startBar - 1) * w, 0, lyricBars * w, height)
+    ctx.fillStyle = color('--ink')
+    bars.forEach((steps, b) =>
+      steps.forEach((level, s) => {
+        if (level < 0.2) return
+        ctx.globalAlpha = Math.min(1, level)
+        ctx.fillRect(b * w + (w > 3 ? 0.5 : 0), s * 6 + 0.5, Math.max(1, w - (w > 3 ? 1 : 0)), 5)
+      }),
+    )
+    ctx.globalAlpha = 1
+    ctx.fillStyle = color('--line-strong')
+    for (const beat of [4, 8, 12]) ctx.fillRect(0, beat * 6, width, 1)
+  }, [bars, startBar, lyricBars, width, height, themeVersion])
+
+  if (!bars.length) return null
   return (
-    <svg className="density" viewBox="0 0 100 40" preserveAspectRatio="none" role="img" aria-label="Vocal-range onsets per bar">
-      <rect x={(startBar - 1) * w} y="0" width={lyricBars * w} height="40" fill="var(--accent-soft)" />
-      {values.map((v, i) => (
-        <rect key={i} x={i * w + w * 0.12} width={w * 0.76} y={40 - (v / max) * 38} height={(v / max) * 38} fill="var(--ink-3)" />
-      ))}
-    </svg>
+    <canvas
+      ref={canvas}
+      className="vocal-map"
+      style={{ height }}
+      role="img"
+      aria-label="Vocal rhythm map: one column per bar, one row per sixteenth note. Click a bar to play from it."
+      onClick={(e) => {
+        const rect = e.currentTarget.getBoundingClientRect()
+        const bar = Math.floor(((e.clientX - rect.left) / rect.width) * bars.length)
+        onPlayFrom(bar - (startBar - 1))
+      }}
+    />
   )
 }
 
@@ -357,9 +406,12 @@ export function TrackView(props: TrackViewProps) {
         </div>
 
         <div>
-          <h3 className="section-label">Vocal-range activity per bar</h3>
-          <Density values={track.patterns.vocalDensity} startBar={song.startBar} lyricBars={lyricBars} />
-          <p className="hint">Onsets between 250 Hz and 3.5 kHz: a rapper's syllables on a full song or acapella, the melody's rhythm on a beat.</p>
+          <h3 className="section-label">Vocal rhythm map</h3>
+          <VocalMap bars={track.patterns.vocalBars} startBar={song.startBar} lyricBars={lyricBars} onPlayFrom={props.onPlayFrom} />
+          <p className="hint" style={{ marginTop: 6 }}>
+            Each column is a bar, each row a sixteenth (beats 1–4 top to bottom). Dark cells are onsets between 250 Hz and 3.5 kHz: a rapper's syllables on a
+            full song or acapella, the melody's rhythm on a beat. Click a bar to play from it.
+          </p>
         </div>
       </div>
     </div>

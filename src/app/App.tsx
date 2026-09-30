@@ -368,7 +368,7 @@ export function App() {
             </div>
             <div className="editor-foot">
               <label className="toggle">
-                <input type="checkbox" checked={showRhymes} onChange={(e) => setShowRhymes(e.target.checked)} />
+                <input id="show-rhymes" type="checkbox" checked={showRhymes} onChange={(e) => setShowRhymes(e.target.checked)} />
                 Underline rhymes
               </label>
               <span>One line = one bar. [Verse] and [Hook] start sections. (Parentheses) are ad-libs.</span>

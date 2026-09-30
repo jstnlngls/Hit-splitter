@@ -874,6 +874,13 @@ textarea {
   border: 1px solid currentColor;
 }
 
+.pair-note {
+  font-size: 11px;
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
 .fit-room { color: var(--ink-2); }
 .fit-fits { color: var(--good); }
 .fit-tight { color: var(--warn); }

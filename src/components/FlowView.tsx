@@ -47,6 +47,8 @@ export function fitLabel(view: BarView): { text: string; tone: 'room' | 'fits' |
 
 interface BarRowProps {
   view: BarView
+  /** Syllables in the bar this one answers (the first line of its couplet), if any. */
+  partner: { index: number; count: number } | null
   lyrics: LyricsAnalysis
   sounds: (Sound | null)[]
   marks: Map<number, HighlightKind>
@@ -58,7 +60,7 @@ interface BarRowProps {
   onLineShift(line: number, shift: number): void
 }
 
-const BarRow = memo(function BarRow({ view, lyrics, sounds, marks, flows, active, nowSlot, onSelectLine, onLineFlow, onLineShift }: BarRowProps) {
+const BarRow = memo(function BarRow({ view, partner, lyrics, sounds, marks, flows, active, nowSlot, onSelectLine, onLineFlow, onLineShift }: BarRowProps) {
   const { bar, grid, placement, shift, customFlow, flow } = view
   const S = grid.slots
   const occupant = new Array<number>(S).fill(-1)
@@ -82,6 +84,12 @@ const BarRow = memo(function BarRow({ view, lyrics, sounds, marks, flows, active
         <span className={`fit fit-${fit.tone}`} title={`${n} syllables in a ${placement.capacity}-slot ${flow ? 'flow' : 'bar'}`}>
           {n}/{placement.capacity} · {fit.text}
         </span>
+        {partner && n > 0 && Math.abs(n - partner.count) >= 3 && (
+          <span className="pair-note" title={`Bar ${partner.index + 1} has ${partner.count} syllables. Couplets usually land closer together.`}>
+            {n > partner.count ? '+' : '−'}
+            {Math.abs(n - partner.count)} vs bar {partner.index + 1}
+          </span>
+        )}
         <span className="bar-tools">
           <label className="sr-only" htmlFor={`flow-${bar.line}`}>
             Flow for bar {bar.index + 1}
@@ -200,14 +208,18 @@ export function FlowView({ analysis, barViews, highlights, flows, activeLine, pl
         <section key={section.index}>
           <h3 className="section-label">{section.label ?? (lyrics.sections.length > 1 ? `Section ${section.index + 1}` : 'Bars')}</h3>
           <div className="bars">
-            {section.bars.map((b) => {
+            {section.bars.map((b, k) => {
               const view = barViews[b]
               if (!view) return null
+              // Second line of each couplet in the section answers the first.
+              const answer = k % 2 === 1 ? barViews[section.bars[k - 1]] : undefined
+              const partner = answer && answer.cues.length ? { index: answer.bar.index, count: answer.cues.length } : null
               const nowSlot = playingBar === b && playhead ? Math.floor(playhead.progress * view.grid.slots) : -1
               return (
                 <BarRow
                   key={b}
                   view={view}
+                  partner={partner}
                   lyrics={lyrics}
                   sounds={rhymes.sound}
                   marks={marks}

@@ -98,6 +98,7 @@ export function Header(props: HeaderProps) {
               </button>
               <input
                 ref={backupInput}
+                id="backup-file"
                 type="file"
                 accept="application/json,.json"
                 className="sr-only"

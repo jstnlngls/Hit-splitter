@@ -31,7 +31,27 @@ npm test         # unit tests (phonetics, rhymes, flow placement, edits, audio a
 npm run build    # static site in dist/ — host it anywhere
 ```
 
-Requires Node 20+.
+Requires Node 22.12+.
+
+## Mac app
+
+Hit Splitter also runs as a regular Mac app with its own window, Dock icon and bundled fonts, so it works offline. The app keeps its songs and imported tracks in `~/Library/Application Support/Hit Splitter`, separate from the browser version.
+
+**Install it**
+
+1. Download the installer from the [Releases](../../releases) page, or from the **Hit-Splitter-mac** artifact of a CI run. Pick `…-mac-apple-silicon.dmg` for M-series Macs or `…-mac-intel.dmg` for Intel Macs.
+2. Open the `.dmg` and drag **Hit Splitter** onto **Applications**.
+3. The app isn't notarized by Apple (that needs a paid Apple developer account), so macOS blocks the first launch. Open it once, then go to **System Settings → Privacy & Security** and click **Open Anyway**. From then on it opens like any other app.
+
+**Build it on your Mac**
+
+```sh
+npm install
+npm run desktop           # build and open the app
+npm run desktop:package   # release/Hit-Splitter-<version>-mac-{apple-silicon,intel}.dmg
+```
+
+`desktop:package` signs the app ad hoc, so no developer certificate is needed. Pushing a version tag (`git tag v0.1.0 && git push origin v0.1.0`) makes CI build both installers and publish them as a GitHub release.
 
 ## How it works
 
@@ -43,9 +63,10 @@ Requires Node 20+.
 | Flow | `src/lib/flow` | Dynamic programming over (syllable, slot, previous gap) scores stress against beat strength, keeps words together, rewards breaths at punctuation and a steady pulse. Templates constrain which slots may be used. |
 | Track analysis | `src/lib/audio/analysis.ts` | STFT, harmonic/percussive separation by median filtering, band-limited onset envelopes (kick, snare, hats, vocal range), tempo from autocorrelation with an octave-aware prior, joint tempo/phase refinement, downbeat choice from where kicks and snares fall, per-bar 16-step patterns and clustering of the vocal-range rhythms. Runs in a Web Worker. |
 | Playback | `src/lib/audio/player.ts`, `synth.ts` | A lookahead scheduler on the Web Audio clock; synthesized kick/snare/hats, metronome, and a two-formant voice per syllable. |
+| Mac app | `desktop/main.cjs`, `scripts/desktop.mjs` | An Electron window serving the built app from a private `app://` origin (so workers and storage behave as on the web), packaged with `@electron/packager`, signed ad hoc and wrapped in a `.dmg`. CI launches the packaged app and imports the demo beat as a smoke test. |
 
 Songs are saved in `localStorage`; imported audio and its analysis features in IndexedDB. **Songs → Download backup** saves a song as JSON; **Open a backup** brings it back (the audio itself is not included).
 
 ## Credits
 
-Pronunciations from the CMU Pronouncing Dictionary, © Carnegie Mellon University, used under its BSD-style license, via the [`cmu-pronouncing-dictionary`](https://github.com/words/cmu-pronouncing-dictionary) package. Fonts: Archivo and IBM Plex Mono (SIL Open Font License), served by Google Fonts. The example verse is original.
+Pronunciations from the CMU Pronouncing Dictionary, © Carnegie Mellon University, used under its BSD-style license, via the [`cmu-pronouncing-dictionary`](https://github.com/words/cmu-pronouncing-dictionary) package. Fonts: Archivo and IBM Plex Mono (SIL Open Font License), served by Google Fonts on the web and bundled from [Fontsource](https://fontsource.org) in the Mac app. The example verse is original.

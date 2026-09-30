@@ -37,7 +37,7 @@
   --snd-dl: 0;
   --ul-dl: -0.22;
 
-  --font-ui: 'Archivo', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-ui: 'Archivo Variable', 'Archivo', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   --font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   --radius: 10px;
   --radius-s: 6px;

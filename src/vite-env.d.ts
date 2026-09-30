@@ -7,6 +7,6 @@ declare module 'virtual:cmudict' {
 }
 
 interface ImportMetaEnv {
-  /** "artifact" for the build published as a claude.ai preview. */
+  /** "desktop" for the Mac app, "artifact" for the build published as a claude.ai preview. */
   readonly VITE_TARGET?: string
 }

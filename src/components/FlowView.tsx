@@ -169,7 +169,9 @@ const BarRow = memo(function BarRow({ view, partner, lyrics, sounds, marks, flow
                 {lyrics.syllables[o.id].text}
               </span>
             ))}
-          {outside.some((o) => o.slot >= S) && <span>Spills past the bar:</span>}
+          {outside.some((o) => o.slot >= S) && (
+            <span>{S < 32 ? 'Spills past the bar (split the line, trim it, or give it the Double time flow):' : 'Spills past the bar:'}</span>
+          )}
           {outside
             .filter((o) => o.slot >= S)
             .map((o) => (

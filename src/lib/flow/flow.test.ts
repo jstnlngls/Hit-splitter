@@ -90,6 +90,12 @@ describe('placeBar', () => {
 })
 
 describe('templates', () => {
+  it('offers a 32-slot double-time flow', () => {
+    const double = BUILT_IN_FLOWS.find((f) => f.id === 'double')!
+    expect(double.grid).toBe('double')
+    expect(double.slots).toHaveLength(32)
+  })
+
   it('maps a 16th pattern onto other grids', () => {
     const eighths = BUILT_IN_FLOWS.find((f) => f.id === 'eighths')!
     expect(slotsForGrid(eighths, GRIDS.double)).toEqual([0, 4, 8, 12, 16, 20, 24, 28])

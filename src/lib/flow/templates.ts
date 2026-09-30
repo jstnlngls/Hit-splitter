@@ -70,11 +70,19 @@ export const BUILT_IN_FLOWS: FlowTemplate[] = [
     source: 'built-in',
   },
   {
-    id: 'double',
-    name: 'Double time',
-    description: 'Every sixteenth filled. Maximum density.',
+    id: 'sixteenths',
+    name: 'Straight 16ths',
+    description: 'A syllable on every sixteenth. Fast and relentless.',
     grid: 'sixteenths',
     slots: steps('xxxxxxxxxxxxxxxx'),
+    source: 'built-in',
+  },
+  {
+    id: 'double',
+    name: 'Double time',
+    description: 'Thirty-two slots per bar for rapid-fire lines.',
+    grid: 'double',
+    slots: steps('x'.repeat(32)),
     source: 'built-in',
   },
 ]

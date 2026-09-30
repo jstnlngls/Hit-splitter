@@ -46,6 +46,8 @@ function fitLabel(view: BarView): { text: string; tone: 'room' | 'fits' | 'tight
 }
 
 interface BarRowProps {
+  /** Everything the row shows, as one string: rows re-render only when it changes. */
+  sig: string
   view: BarView
   /** Syllables in the bar this one answers (the first line of its couplet), if any. */
   partner: { index: number; count: number } | null
@@ -59,6 +61,37 @@ interface BarRowProps {
   onLineFlow(line: number, flow: string | null | undefined): void
   onLineShift(line: number, shift: number): void
 }
+
+function barSignature(view: BarView, lyrics: LyricsAnalysis, sounds: (Sound | null)[], marks: Map<number, HighlightKind>, partner: BarRowProps['partner']): string {
+  const { bar, grid, placement, flow, customFlow, shift } = view
+  const parts: (string | number)[] = [
+    bar.index,
+    bar.line,
+    bar.text,
+    grid.kind,
+    placement.slots.join(','),
+    placement.template?.join(',') ?? '',
+    flow?.id ?? '',
+    customFlow ? 1 : 0,
+    shift,
+    partner ? `${partner.index}:${partner.count}` : '',
+  ]
+  for (const id of bar.syllables) {
+    const s = lyrics.syllables[id]
+    parts.push(`${s.text}${s.stress}${s.weak ? 'w' : ''}${sounds[id] ?? ''}${marks.get(id) ?? ''}`)
+  }
+  for (const id of bar.adlibs) parts.push(`(${lyrics.syllables[id].text}`)
+  return parts.join('|')
+}
+
+const sameRow = (a: BarRowProps, b: BarRowProps) =>
+  a.sig === b.sig &&
+  a.active === b.active &&
+  a.nowSlot === b.nowSlot &&
+  a.flows === b.flows &&
+  a.onSelectLine === b.onSelectLine &&
+  a.onLineFlow === b.onLineFlow &&
+  a.onLineShift === b.onLineShift
 
 const BarRow = memo(function BarRow({ view, partner, lyrics, sounds, marks, flows, active, nowSlot, onSelectLine, onLineFlow, onLineShift }: BarRowProps) {
   const { bar, grid, placement, shift, customFlow, flow } = view
@@ -186,7 +219,7 @@ const BarRow = memo(function BarRow({ view, partner, lyrics, sounds, marks, flow
       )}
     </div>
   )
-})
+}, sameRow)
 
 export function FlowView({ analysis, barViews, highlights, flows, activeLine, playhead, follow, onSelectLine, onLineFlow, onLineShift }: FlowViewProps) {
   const { lyrics, rhymes } = analysis
@@ -230,6 +263,7 @@ export function FlowView({ analysis, barViews, highlights, flows, activeLine, pl
               return (
                 <BarRow
                   key={b}
+                  sig={barSignature(view, lyrics, rhymes.sound, marks, partner)}
                   view={view}
                   partner={partner}
                   lyrics={lyrics}

@@ -31,36 +31,93 @@ interface Segment {
   mark: HighlightKind | null
 }
 
+interface RhymeRange {
+  start: number
+  end: number
+  sound: Sound
+}
+
+interface MarkRange {
+  start: number
+  end: number
+  kind: HighlightKind
+}
+
+// Lines travel to the memoized backdrop rows as compact strings, so a row
+// only re-renders when its own text, rhymes or highlights change.
+const encodeRhymes = (ranges: RhymeRange[]) => ranges.map((r) => `${r.start}-${r.end}-${r.sound}`).join('|')
+const decodeRhymes = (code: string): RhymeRange[] =>
+  code
+    ? code.split('|').map((part) => {
+        const [start, end, sound] = part.split('-')
+        return { start: Number(start), end: Number(end), sound: sound as Sound }
+      })
+    : []
+const encodeMarks = (ranges: MarkRange[]) => ranges.map((r) => `${r.start}-${r.end}-${r.kind}`).join('|')
+const decodeMarks = (code: string): MarkRange[] =>
+  code
+    ? code.split('|').map((part) => {
+        const [start, end, kind] = part.split('-')
+        return { start: Number(start), end: Number(end), kind: kind as HighlightKind }
+      })
+    : []
+
 /** Splits a line into runs that share the same rhyme color and highlighter. */
-function segmentLine(
-  line: string,
-  lineStart: number,
-  syllables: { start: number; end: number; sound: Sound | null; weak: boolean }[],
-  highlights: Highlight[],
-): Segment[] {
+function segmentLine(line: string, rhymes: RhymeRange[], marks: MarkRange[]): Segment[] {
   const cuts = new Set([0, line.length])
-  for (const s of syllables) {
-    cuts.add(s.start)
-    cuts.add(s.end)
+  for (const r of [...rhymes, ...marks]) {
+    cuts.add(Math.max(0, Math.min(line.length, r.start)))
+    cuts.add(Math.max(0, Math.min(line.length, r.end)))
   }
-  const marks = highlights
-    .filter((h) => h.end > lineStart && h.start < lineStart + line.length)
-    .map((h) => ({ start: Math.max(0, h.start - lineStart), end: Math.min(line.length, h.end - lineStart), kind: h.kind }))
-  for (const m of marks) {
-    cuts.add(m.start)
-    cuts.add(m.end)
-  }
-  const points = [...cuts].filter((c) => c >= 0 && c <= line.length).sort((a, b) => a - b)
+  const points = [...cuts].sort((a, b) => a - b)
   const segments: Segment[] = []
   for (let k = 0; k < points.length - 1; k++) {
     const [a, b] = [points[k], points[k + 1]]
     if (a === b) continue
-    const syl = syllables.find((s) => s.start <= a && s.end >= b && s.sound !== null)
+    const rhyme = rhymes.find((r) => r.start <= a && r.end >= b)
     const mark = marks.findLast((m) => m.start <= a && m.end >= b)
-    segments.push({ text: line.slice(a, b), sound: syl?.sound ?? null, weak: syl?.weak ?? false, mark: mark?.kind ?? null })
+    segments.push({ text: line.slice(a, b), sound: rhyme?.sound ?? null, weak: rhyme?.sound === 'SCHWA', mark: mark?.kind ?? null })
   }
   return segments
 }
+
+interface BackdropLineProps {
+  index: number
+  text: string
+  active: boolean
+  bar: number | null
+  count: string | null
+  countClass: string
+  countTitle: string
+  rhymes: string
+  marks: string
+}
+
+const BackdropLine = memo(function BackdropLine({ index, text, active, bar, count, countClass, countTitle, rhymes, marks }: BackdropLineProps) {
+  const segments = segmentLine(text, decodeRhymes(rhymes), decodeMarks(marks))
+  return (
+    <div className={active ? 'bl is-active' : 'bl'} data-line={index}>
+      <span className="gutter">
+        {bar !== null && <span>{bar}</span>}
+        {count !== null && (
+          <span className={`count ${countClass}`} title={countTitle}>
+            {count}
+          </span>
+        )}
+      </span>
+      {segments.map((seg, k) => (
+        <span
+          key={k}
+          className={[seg.mark && `mark mark-${seg.mark}`, seg.sound && 'rh', seg.weak && 'is-weak'].filter(Boolean).join(' ') || undefined}
+          data-snd={seg.sound ?? undefined}
+        >
+          {seg.text}
+        </span>
+      ))}
+      {text.length === 0 && '\u200b'}
+    </div>
+  )
+})
 
 function fitClass(view: BarView | undefined): string {
   if (!view) return ''
@@ -113,28 +170,24 @@ export const Editor = memo(function Editor({
 
   // Rhyme underlines come from the (possibly one frame older) analysis; only
   // use them on lines whose text is unchanged so they always line up.
-  const syllablesByLine = useMemo(() => {
-    const out = new Map<number, { start: number; end: number; sound: Sound | null; weak: boolean }[]>()
+  const rhymeCodes = useMemo(() => {
+    const out = new Map<number, string>()
     if (!showRhymes) return out
     const { lyrics, rhymes } = analysis
     const current = new Map<string, number[]>()
     lines.forEach((l, i) => current.set(l, [...(current.get(l) ?? []), i]))
-    const byLine = new Map<number, typeof lyrics.syllables>()
-    for (const s of lyrics.syllables) byLine.set(s.line, [...(byLine.get(s.line) ?? []), s])
-    for (const line of lyrics.lines) {
-      if (line.kind !== 'lyric') continue
+    const byLine = new Map<number, RhymeRange[]>()
+    for (const s of lyrics.syllables) {
+      const sound = rhymes.sound[s.id]
+      if (!sound) continue
+      const line = lyrics.lines[s.line]
+      byLine.set(s.line, [...(byLine.get(s.line) ?? []), { start: s.start - line.start, end: s.end - line.start, sound }])
+    }
+    for (const [lineIndex, ranges] of byLine) {
+      const line = lyrics.lines[lineIndex]
       const targets = current.get(line.text)
       if (!targets) continue
-      const target = targets.includes(line.index) ? line.index : targets[0]
-      out.set(
-        target,
-        (byLine.get(line.index) ?? []).map((s) => ({
-          start: s.start - line.start,
-          end: s.end - line.start,
-          sound: rhymes.sound[s.id],
-          weak: rhymes.sound[s.id] === 'SCHWA',
-        })),
-      )
+      out.set(targets.includes(lineIndex) ? lineIndex : targets[0], encodeRhymes(ranges))
     }
     return out
   }, [analysis, lines, showRhymes])
@@ -178,28 +231,23 @@ export const Editor = memo(function Editor({
           const { start, isLyric, barNumber } = layout[i]
           // Bar numbers and counts come from the analysis when it has caught up with this line.
           const view = isLyric && lyricLines[i]?.text === line ? barByLine.get(i) : undefined
-          const segments = segmentLine(line, start, syllablesByLine.get(i) ?? [], highlights)
+          const marks = highlights
+            .filter((h) => h.end > start && h.start < start + line.length)
+            .map((h) => ({ start: h.start - start, end: h.end - start, kind: h.kind }))
+          const template = view?.placement.template
           return (
-            <div key={i} className={i === activeLine ? 'bl is-active' : 'bl'} data-line={i}>
-              <span className="gutter">
-                {isLyric && <span>{view ? view.bar.index + 1 : barNumber}</span>}
-                {view && (
-                  <span className={`count ${fitClass(view)}`} title={view.placement.template ? `${view.cues.length} of ${view.placement.capacity} flow slots` : `${view.cues.length} syllables`}>
-                    {view.placement.template ? `${view.cues.length}/${view.placement.capacity}` : view.cues.length}
-                  </span>
-                )}
-              </span>
-              {segments.map((seg, k) => (
-                <span
-                  key={k}
-                  className={[seg.mark && `mark mark-${seg.mark}`, seg.sound && 'rh', seg.weak && 'is-weak'].filter(Boolean).join(' ') || undefined}
-                  data-snd={seg.sound ?? undefined}
-                >
-                  {seg.text}
-                </span>
-              ))}
-              {line.length === 0 && '​'}
-            </div>
+            <BackdropLine
+              key={i}
+              index={i}
+              text={line}
+              active={i === activeLine}
+              bar={isLyric ? (view ? view.bar.index + 1 : barNumber) : null}
+              count={view ? (template ? `${view.cues.length}/${view.placement.capacity}` : String(view.cues.length)) : null}
+              countClass={fitClass(view)}
+              countTitle={view ? (template ? `${view.cues.length} of ${view.placement.capacity} flow slots` : `${view.cues.length} syllables`) : ''}
+              rhymes={rhymeCodes.get(i) ?? ''}
+              marks={encodeMarks(marks)}
+            />
           )
         })}
       </div>

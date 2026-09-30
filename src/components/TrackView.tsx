@@ -14,6 +14,8 @@ interface TrackViewProps {
   /** Track time being heard, or null. */
   playTime: number | null
   onImport(file: File): void
+  /** Builds a demo beat in the browser and imports it. */
+  onDemo(): Promise<void>
   onRemove(): void
   onTempo(bpm: number, refine?: boolean): void
   onShiftDownbeat(beats: number): void
@@ -221,6 +223,7 @@ export function TrackView(props: TrackViewProps) {
   const { song, status, lyricBars, trackFlows, playTime } = props
   const input = useRef<HTMLInputElement>(null)
   const [dragOver, setDragOver] = useState(false)
+  const [demoPending, setDemoPending] = useState(false)
   const busy = status.phase === 'decoding' || status.phase === 'analyzing' || status.phase === 'restoring'
   const track = song.track
 
@@ -272,9 +275,22 @@ export function TrackView(props: TrackViewProps) {
               Hit Splitter finds the tempo, where each bar starts, the drum pattern, and the syllable rhythms in the vocal range, then turns them into flows
               you can write to. The audio stays in this browser.
             </p>
-            <button type="button" className="btn btn-primary" onClick={() => input.current?.click()}>
-              <Icon name="upload" /> Choose audio file
-            </button>
+            <span className="control">
+              <button type="button" className="btn btn-primary" onClick={() => input.current?.click()}>
+                <Icon name="upload" /> Choose audio file
+              </button>
+              <button
+                type="button"
+                className="btn"
+                disabled={demoPending}
+                onClick={() => {
+                  setDemoPending(true)
+                  props.onDemo().finally(() => setDemoPending(false))
+                }}
+              >
+                {demoPending ? 'Building the demo…' : 'Try a demo beat'}
+              </button>
+            </span>
             <p className="hint">MP3, WAV, M4A, OGG or FLAC. Drop a file here too. Until then, play writes over a built-in boom-bap loop at {song.bpm} BPM.</p>
           </>
         )}

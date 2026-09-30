@@ -277,6 +277,15 @@ export function App() {
           stop()
           void track.importFile(file)
         }}
+        onDemo={async () => {
+          stop()
+          try {
+            const { renderDemoBeat } = await import('../lib/audio/demoBeat')
+            await track.importFile(await renderDemoBeat())
+          } catch {
+            setToast('The demo beat couldn’t be built in this browser.')
+          }
+        }}
         onRemove={() => {
           stop()
           track.removeTrack()

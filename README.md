@@ -45,13 +45,17 @@ Hit Splitter also runs as a regular Mac app with its own window, Dock icon and b
 
 **Build it on your Mac**
 
+An app built on your own Mac opens without the Gatekeeper prompt, since macOS only checks apps that were downloaded. With Node 22.12+:
+
 ```sh
-npm install
-npm run desktop           # build and open the app
+git clone https://github.com/jstnlngls/Hit-splitter.git && cd Hit-splitter
+npm ci
+npm run desktop:install   # build it for this Mac and put it in Applications
+npm run desktop           # or build and open it without installing
 npm run desktop:package   # release/Hit-Splitter-<version>-mac-{apple-silicon,intel}.dmg
 ```
 
-`desktop:package` signs the app ad hoc, so no developer certificate is needed. To publish a version, publish a release with a new `v…` tag on GitHub (**Releases → Draft a new release**) or push the tag (`git tag v0.1.0 && git push origin v0.1.0`). CI then builds both installers and attaches them to the release.
+`desktop:install` replaces any copy already in Applications. Your songs stay, since they're kept in the app's profile rather than inside the app. Every build is signed ad hoc, so no developer certificate is needed. To publish a version, publish a release with a new `v…` tag on GitHub (**Releases → Draft a new release**) or push the tag (`git tag v0.1.0 && git push origin v0.1.0`). CI then builds both installers and attaches them to the release.
 
 ## How it works
 

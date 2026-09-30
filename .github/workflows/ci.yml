@@ -59,6 +59,15 @@ jobs:
           name: smoke-test-screenshot
           path: release/smoke.png
           if-no-files-found: ignore
+      - name: Install into /Applications the way it's done on a Mac
+        run: |
+          npm run desktop:install
+          codesign --verify --deep --strict "/Applications/Hit Splitter.app"
+          # Built on the Mac itself, so nothing marks it as downloaded for Gatekeeper to check.
+          if xattr -p com.apple.quarantine "/Applications/Hit Splitter.app" > /dev/null 2>&1; then
+            echo "The installed app is quarantined, so Gatekeeper would stop it"
+            exit 1
+          fi
 
   release:
     name: Publish release

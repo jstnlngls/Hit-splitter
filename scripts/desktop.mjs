@@ -5,6 +5,7 @@
  *   node scripts/desktop.mjs start    build and open the app (needs Electron's binary)
  *   node scripts/desktop.mjs package  build Hit Splitter.app for Apple silicon and Intel;
  *                                     on a Mac, also sign it ad hoc and wrap it in a .dmg
+ *   node scripts/desktop.mjs install  build it for this Mac and put it in /Applications
  *   node scripts/desktop.mjs smoke    launch the packaged app, check it works, and quit
  */
 import { execFileSync, spawnSync } from 'node:child_process'
@@ -40,10 +41,10 @@ function start() {
   run(electron, [stageDir])
 }
 
-async function packageApp() {
+/** Packages Hit Splitter.app for each architecture; on a Mac, also signs it ad hoc. */
+async function buildApps(archs) {
   stage()
   const { packager } = await import('@electron/packager')
-  const archs = ['arm64', 'x64']
   const outputs = await packager({
     dir: stageDir,
     name: NAME,
@@ -62,16 +63,22 @@ async function packageApp() {
     electronVersion: pkg.devDependencies.electron.replace(/^[^\d]*/, ''),
     darwinDarkModeSupport: true,
   })
-
-  for (const dir of outputs) {
-    const arch = archs.find((a) => dir.endsWith(`-${a}`))
+  return outputs.map((dir) => {
     const appPath = path.join(dir, `${NAME}.app`)
-    const base = `Hit-Splitter-${pkg.version}-mac-${ARCH_LABEL[arch]}`
     if (onMac) {
       // No Apple developer certificate here, so sign ad hoc: Apple silicon
       // refuses to run unsigned code, and a fresh signature covers our changes.
       run('codesign', ['--force', '--deep', '--sign', '-', appPath])
       run('codesign', ['--verify', '--deep', '--strict', appPath])
+    }
+    return { arch: archs.find((a) => dir.endsWith(`-${a}`)), dir, appPath }
+  })
+}
+
+async function packageApp() {
+  for (const { arch, dir, appPath } of await buildApps(['arm64', 'x64'])) {
+    const base = `Hit-Splitter-${pkg.version}-mac-${ARCH_LABEL[arch]}`
+    if (onMac) {
       const dmgRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'hit-splitter-dmg-'))
       run('cp', ['-R', appPath, dmgRoot])
       fs.symlinkSync('/Applications', path.join(dmgRoot, 'Applications'))
@@ -96,6 +103,24 @@ async function packageApp() {
   }
 }
 
+/**
+ * Builds the app for this Mac and puts it in /Applications, replacing any copy
+ * already there. An app built on the Mac itself was never downloaded, so it
+ * opens without the Gatekeeper prompt. Songs live in the app's profile, not
+ * the bundle, so they carry over.
+ */
+async function install() {
+  if (!onMac) throw new Error('install puts the app in /Applications, so run it on a Mac')
+  const target = path.join('/Applications', `${NAME}.app`)
+  const running = () => spawnSync('pgrep', ['-x', NAME]).status === 0
+  if (running()) throw new Error(`Quit ${NAME} first, then run this again`)
+  const [{ appPath }] = await buildApps([process.arch === 'arm64' ? 'arm64' : 'x64'])
+  if (running()) throw new Error(`Quit ${NAME} first, then run this again`)
+  fs.rmSync(target, { recursive: true, force: true })
+  run('ditto', [appPath, target])
+  console.log(`Installed ${target}`)
+}
+
 function smoke() {
   const arch = process.arch === 'arm64' ? 'arm64' : 'x64'
   const binary = path.join(releaseDir, `${NAME}-darwin-${arch}`, `${NAME}.app`, 'Contents/MacOS', NAME)
@@ -113,7 +138,7 @@ function smoke() {
 }
 
 const command = process.argv[2]
-const commands = { stage, start, package: packageApp, smoke }
+const commands = { stage, start, package: packageApp, install, smoke }
 if (!commands[command]) {
   console.error(`Usage: node scripts/desktop.mjs <${Object.keys(commands).join('|')}>`)
   process.exit(1)

@@ -10,6 +10,7 @@
     "preview": "vite preview",
     "desktop": "node scripts/desktop.mjs start",
     "desktop:package": "node scripts/desktop.mjs package",
+    "desktop:install": "node scripts/desktop.mjs install",
     "desktop:smoke": "node scripts/desktop.mjs smoke",
     "test": "vitest run",
     "test:watch": "vitest",

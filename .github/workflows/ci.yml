@@ -72,11 +72,20 @@ jobs:
         with:
           name: Hit-Splitter-mac
           path: dmg
-      - name: Create the GitHub release with both installers
+      - name: Publish the GitHub release with both installers
         env:
           GH_TOKEN: ${{ github.token }}
+          NOTES: "Download the .dmg for your Mac (apple-silicon for M-series Macs, intel for older ones), open it, and drag Hit Splitter into Applications. The app isn't notarized by Apple: the first time you open it, go to System Settings → Privacy & Security and choose Open Anyway."
         run: |
-          gh release create "$GITHUB_REF_NAME" dmg/*.dmg \
-            --repo "$GITHUB_REPOSITORY" \
-            --title "Hit Splitter $GITHUB_REF_NAME" \
-            --notes "Download the .dmg for your Mac (apple-silicon for M-series Macs, intel for older ones), open it, and drag Hit Splitter into Applications. The app isn't notarized by Apple: the first time you open it, go to System Settings → Privacy & Security and choose Open Anyway."
+          # A release published on github.com creates its tag, which starts this run: add the installers to it.
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" dmg/*.dmg --repo "$GITHUB_REPOSITORY" --clobber
+            if [ -z "$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json body --jq .body)" ]; then
+              gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --notes "$NOTES"
+            fi
+          else
+            gh release create "$GITHUB_REF_NAME" dmg/*.dmg \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "Hit Splitter $GITHUB_REF_NAME" \
+              --notes "$NOTES"
+          fi

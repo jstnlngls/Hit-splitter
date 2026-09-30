@@ -51,7 +51,7 @@ npm run desktop           # build and open the app
 npm run desktop:package   # release/Hit-Splitter-<version>-mac-{apple-silicon,intel}.dmg
 ```
 
-`desktop:package` signs the app ad hoc, so no developer certificate is needed. Pushing a version tag (`git tag v0.1.0 && git push origin v0.1.0`) makes CI build both installers and publish them as a GitHub release.
+`desktop:package` signs the app ad hoc, so no developer certificate is needed. To publish a version, publish a release with a new `v…` tag on GitHub (**Releases → Draft a new release**) or push the tag (`git tag v0.1.0 && git push origin v0.1.0`). CI then builds both installers and attaches them to the release.
 
 ## How it works
 

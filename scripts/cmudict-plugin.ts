@@ -63,8 +63,13 @@ export function buildCompactDictionary(dictionary: Record<string, string>): stri
         break
       }
     }
+    // A final "-y" is unstressed ("probably", "nobody"); a few entries mark it
+    // with secondary stress, which would make it look like a rhyme anchor.
+    const phones = pron.split(' ')
+    const last = phones.findLastIndex((p) => /\d$/.test(p))
+    if (/(y|ey|ie)$/.test(word) && phones[last] === 'IY2' && phones.filter((p) => /\d$/.test(p)).length > 1) phones[last] = 'IY0'
     let encoded = ''
-    for (const phone of pron.split(' ')) {
+    for (const phone of phones) {
       const code = codeFor.get(phone)
       if (!code) throw new Error(`Unknown phoneme ${phone} in "${word}"`)
       encoded += code

@@ -356,12 +356,18 @@ export function TrackView(props: TrackViewProps) {
         </div>
         <div className="control-row">
           <span className="field-label">Beat 1</span>
-          <span className="control">
-            <button type="button" className="btn btn-small" onClick={() => props.onShiftDownbeat(-1)}>
-              <Icon name="left" /> A beat earlier
+          <span className="control" role="group" aria-label="Move beat 1">
+            <button type="button" className="btn btn-small" onClick={() => props.onShiftDownbeat(-1)} title="Move beat 1 a beat earlier">
+              <Icon name="left" /> Beat
             </button>
-            <button type="button" className="btn btn-small" onClick={() => props.onShiftDownbeat(1)}>
-              A beat later <Icon name="right" />
+            <button type="button" className="btn btn-small btn-ghost" onClick={() => props.onShiftDownbeat(-0.5)} title="Move beat 1 half a beat earlier">
+              −½
+            </button>
+            <button type="button" className="btn btn-small btn-ghost" onClick={() => props.onShiftDownbeat(0.5)} title="Move beat 1 half a beat later">
+              +½
+            </button>
+            <button type="button" className="btn btn-small" onClick={() => props.onShiftDownbeat(1)} title="Move beat 1 a beat later">
+              Beat <Icon name="right" />
             </button>
           </span>
           <span className="hint">First bar starts at {track.firstDownbeat.toFixed(2)} s</span>

@@ -24,7 +24,7 @@ export interface GridEstimate {
   beatOffset: number
   /** Time in seconds of the first bar start (beat 1) at or after 0, always < 4 beats. */
   firstDownbeat: number
-  /** 0..1, how strongly onsets line up with the grid. */
+  /** 0..1, how steadily onsets repeat at the beat and line up with the grid. */
   confidence: number
 }
 
@@ -54,7 +54,7 @@ export interface PatternAnalysis {
 
 export interface TrackAnalysis extends GridEstimate, PatternAnalysis {
   duration: number
-  /** Best first; includes octave alternatives (x2, /2) when plausible; scores normalized so the best is 1. */
+  /** The detected tempo first (score 1), then its octaves (x2, /2) when plausible and other strong periodicities; scores are relative to the detected tempo's, capped at 1. */
   bpmCandidates: { bpm: number; score: number }[]
   peaks: number[]
 }
@@ -64,6 +64,25 @@ export const ANALYSIS_SAMPLE_RATE = 22050
 export const PEAK_BUCKETS = 1200
 
 const STEPS = 16
+/** Normalized step strength that counts as a hit, and that a bar needs somewhere to count as active. */
+const HIT = 0.35
+const ACTIVE = 0.2
+
+/** Log compression: log(1 + GAMMA·mag), with mag scaled so a full-scale sine reads 1. */
+const GAMMA = 100
+/**
+ * Where an onset sits inside the analysis window of the frame that reports it,
+ * as a fraction of the window. The flux between two overlapping frames peaks
+ * once the onset is slightly past the window centre, so frames start a bit
+ * earlier than centred; calibrated on synthetic drums to within a few ms.
+ */
+const ONSET_POSITION = 0.58
+/** Above this share of hat-band peaks landing on snare hits, the track is taken to have no separate hi-hats. */
+const HAT_PEAKS_ON_SNARES = 0.6
+/** Frames between the two spectra compared for vocal onsets, and how far onsets are moved back. */
+const VOCAL_LAG = 3
+const VOCAL_SHIFT = 2
+
 const MIN_BPM = 60
 const MAX_BPM = 200
 /** Centre of the tempo prior: typical rap tempos resolve octave errors toward it. */
@@ -75,19 +94,8 @@ const PLAUSIBLE_MAX = 240
 const HALF_BEAT_TAP = 0.25
 /** How much better (0..1 scale) the drums must fit the double or half tempo to switch to it. */
 const OCTAVE_FIT_MARGIN = 0.15
-/** Log compression: log(1 + GAMMA·mag), with mag scaled so a full-scale sine reads 1. */
-const GAMMA = 100
-/**
- * Where an onset sits inside the analysis window of the frame that reports it,
- * as a fraction of the window. The flux between two overlapping frames peaks
- * once the onset is slightly past the window centre, so frames start a bit
- * earlier than centred; calibrated on synthetic drums to within ~1 ms.
- */
-const ONSET_POSITION = 0.58
-const HIT = 0.35
-const ACTIVE = 0.2
-/** Upper bound on the share of hat-band onset strength removed from the snare band. */
-const MAX_HAT_SPILL = 0.45
+/** Preference (0..1 scale) for bars that start on the track's first strong beat. */
+const FIRST_BAR_BONUS = 0.05
 
 const round = (x: number, digits: number) => {
   const f = 10 ** digits
@@ -201,19 +209,26 @@ function detrend(env: Float32Array, half: number) {
 }
 
 /**
- * Removes, in place, what bright hi-hats leak into the snare envelope. The leak
- * is the median snare/hat ratio at strong hat onsets (mostly hat-only moments,
- * as hats outnumber snares); the cap keeps a track without hats from losing its
- * snares to their own sizzle in the hat band.
+ * Removes, in place, what hi-hats leak into the snare envelope: the snare/hat
+ * ratio at hi-hat peaks that are not snare hits (the low end of the ratios,
+ * since snares share some of those peaks) times the hat envelope. When most
+ * hat-band peaks are snare hits, the band is just the snares' own sizzle and
+ * nothing is removed.
  */
 function removeHatSpill(snare: Float32Array, hat: Float32Array) {
   const strong = Math.max(percentile(hat, 0.8), 1e-4)
+  const snareHit = 0.5 * Math.max(percentile(snare, 0.99), 1e-12)
   const ratios: number[] = []
+  let withSnare = 0
   for (let c = 1; c + 1 < hat.length; c++) {
     const h = hat[c]
-    if (h > strong && h >= hat[c - 1] && h >= hat[c + 1]) ratios.push(snare[c] / h)
+    if (h > strong && h >= hat[c - 1] && h >= hat[c + 1]) {
+      ratios.push(snare[c] / h)
+      if (snare[c] > snareHit) withSnare++
+    }
   }
-  const spill = Math.min(MAX_HAT_SPILL, percentile(ratios, 0.5))
+  if (!ratios.length || withSnare > HAT_PEAKS_ON_SNARES * ratios.length) return
+  const spill = percentile(ratios, 0.3)
   if (spill > 0) for (let c = 0; c < snare.length; c++) snare[c] = Math.max(0, snare[c] - spill * hat[c])
 }
 
@@ -243,10 +258,11 @@ function waveformPeaks(samples: Float32Array): number[] {
   return out
 }
 
-/** The input with non-finite samples zeroed (copied only when needed). */
+/** The input with non-finite samples zeroed and absurd ones clamped, so spectra stay finite (copied only when needed). */
 function sanitize(samples: Float32Array): Float32Array {
+  const limit = 1e4
   for (let i = 0; i < samples.length; i++) {
-    if (!Number.isFinite(samples[i])) return samples.map((v) => (Number.isFinite(v) ? v : 0))
+    if (!(Math.abs(samples[i]) <= limit)) return samples.map((v) => (Number.isFinite(v) ? clamp(v, -limit, limit) : 0))
   }
   return samples
 }
@@ -263,6 +279,11 @@ function sanitize(samples: Float32Array): Float32Array {
  * across frequency (P) keeps hits; soft masks P²/(H²+P²) and H²/(H²+P²) split
  * each bin between the two. The spectrogram is streamed through a ring buffer
  * as wide as the time median, so memory stays small for long tracks.
+ *
+ * Each envelope is the rise in log magnitude averaged over its band: kick
+ * 30-150 Hz, snare 1-2.2 kHz and hat 5-11 kHz from the percussive part, vocal
+ * 250-3500 Hz from the harmonic part. Each is detrended and scaled so its 99th
+ * percentile is ~1; `full` combines them.
  */
 export function computeFeatures(samples: Float32Array, sampleRate: number, onProgress?: (p: number) => void): AudioFeatures {
   if (!Number.isFinite(sampleRate) || sampleRate <= 0) throw new RangeError(`Invalid sample rate: ${sampleRate}`)
@@ -296,10 +317,16 @@ export function computeFeatures(samples: Float32Array, sampleRate: number, onPro
   const harm = new Float32Array(bins)
   const perc = new Float32Array(bins)
   const fluxP = new Float32Array(bins)
+  // The snare band uses the flux of plain (uncompressed) magnitude: log compression lifts the
+  // faint spill of bright hi-hats (which start from silence in this band) to the size of a
+  // real snare, while their actual energy here is far below a snare's.
+  const fluxLin = new Float32Array(bins)
+  let prevLin = new Float32Array(bins)
+  let curLin = new Float32Array(bins)
   let prevP = new Float32Array(bins)
   let curP = new Float32Array(bins)
-  let prevH = new Float32Array(bins)
-  let curH = new Float32Array(bins)
+  // Harmonic log-magnitudes of the last VOCAL_LAG + 1 frames, indexed by frame % (VOCAL_LAG + 1).
+  const pastH = Array.from({ length: VOCAL_LAG + 1 }, () => new Float32Array(bins))
 
   const kick = new Float32Array(frames)
   const snare = new Float32Array(frames)
@@ -340,6 +367,8 @@ export function computeFeatures(samples: Float32Array, sampleRate: number, onPro
     const c = t - halfT
     if (c >= 0) {
       const row = (c % spanT) * bins
+      const curH = pastH[c % (VOCAL_LAG + 1)]
+      const prevH = pastH[(c + 1) % (VOCAL_LAG + 1)]
       for (let k = 0; k < bins; k++) harm[k] = medianOf(timeWindows, k * spanT, count)
       frequencyMedian(ring, row, bins, halfF, freqScratch, perc)
       for (let k = 1; k < bins; k++) {
@@ -356,6 +385,11 @@ export function computeFeatures(samples: Float32Array, sampleRate: number, onPro
         curP[k] = lp
         const d = lp - prevP[k]
         fluxP[k] = d > 0 ? d : 0
+        if (k >= snareLo && k <= snareHi) {
+          const lin = s * mask
+          curLin[k] = lin
+          fluxLin[k] = lin > prevLin[k] ? lin - prevLin[k] : 0
+        }
         if (k >= vocalLo - 1 && k <= vocalHi + 1) {
           const h4 = h2 * h2
           const p4 = p2 * p2
@@ -363,8 +397,9 @@ export function computeFeatures(samples: Float32Array, sampleRate: number, onPro
           curH[k] = Math.log1p(GAMMA * s * harmonic * peaky)
         }
       }
-      // Vocal flux compares each bin with the loudest of its neighbours in the previous
-      // frame, so small pitch glides and vibrato do not register as new onsets.
+      // Vocal flux compares each bin with the loudest of its neighbours VOCAL_LAG frames back,
+      // so small pitch glides and vibrato do not register as onsets, and a syllable whose
+      // harmonics only emerge over a few frames (under a snare, say) still counts in full.
       let vocalSum = 0
       for (let k = vocalLo; k <= vocalHi; k++) {
         const d = curH[k] - Math.max(prevH[k - 1], prevH[k], k + 1 < bins ? prevH[k + 1] : 0)
@@ -373,17 +408,17 @@ export function computeFeatures(samples: Float32Array, sampleRate: number, onPro
       // Broadband hits (snares, claps) and voices also reach below 150 Hz; their share is
       // estimated from the 300-1000 Hz flux and taken off the kick.
       kick[c] = Math.max(0, bandMean(fluxP, kickLo, kickHi) - bandMean(fluxP, refLo, refHi))
-      snare[c] = bandMean(fluxP, snareLo, snareHi)
+      snare[c] = bandMean(fluxLin, snareLo, snareHi)
       hat[c] = bandMean(fluxP, hatLo, hatHi)
-      // The harmonic mask needs a few ms of a tone before it counts it, so vocal onsets
-      // register about a frame late; report them one frame earlier.
-      if (c > 0) vocal[c - 1] = vocalHi >= vocalLo ? vocalSum / (vocalHi - vocalLo + 1) : 0
+      // The rise spans the lag, and the harmonic mask needs a few ms of a tone before it counts
+      // it, so report vocal onsets VOCAL_SHIFT frames earlier.
+      if (c >= VOCAL_SHIFT) vocal[c - VOCAL_SHIFT] = vocalHi >= vocalLo ? vocalSum / (vocalHi - vocalLo + 1) : 0
       const swapP = prevP
       prevP = curP
       curP = swapP
-      const swapH = prevH
-      prevH = curH
-      curH = swapH
+      const swapLin = prevLin
+      prevLin = curLin
+      curLin = swapLin
     }
     if (onProgress && t % progressEvery === 0) onProgress((0.95 * t) / total)
   }
@@ -441,7 +476,8 @@ function autocorrelation(env: Float32Array, maxLag: number): Float64Array {
 /**
  * Tempo from onset autocorrelation: each tempo is scored by the
  * autocorrelation at 1..4 beat periods, weighted by a gentle log-normal prior
- * around PRIOR_BPM (one octave wide).
+ * around PRIOR_BPM (one octave wide). The winner's double or half takes over
+ * when the kick and snare clearly fit bars at that tempo better.
  *
  * The autocorrelation is averaged over the bands rather than taken of the
  * combined envelope, so busy 16th-note hats cannot drown out the bar-level
@@ -494,7 +530,7 @@ export function estimateTempo(
     const b = scores[best]
     const c = scores[best + 1]
     const denom = a - 2 * b + c
-    if (denom < 0) bpm += (clamp((0.5 * (a - c)) / denom, -0.5, 0.5)) * step
+    if (denom < 0) bpm += clamp((0.5 * (a - c)) / denom, -0.5, 0.5) * step
   }
   const top = score(bpm)
 
@@ -630,15 +666,50 @@ export function estimateGrid(features: AudioFeatures, bpm: number, opts: { refin
   const period = (60 * fr) / tempo
 
   const bar = barFit(features, phase, period).beat
+  // Confidence needs onsets that land on the beats rather than between them, and that repeat
+  // at the beat period at all: the grid search always finds some lucky phase, so the
+  // alignment alone rates tempo-less material (free-time speech, random hits) too highly.
   const overall = env.length ? env.reduce((a, b) => a + b, 0) / env.length : 0
   const ratio = overall > 1e-9 ? beatMean(env, phase, period) / overall : 0
-  const confidence = 1 - Math.exp(-Math.max(0, ratio - 1) / 2)
+  const alignment = 1 - Math.exp(-Math.max(0, ratio - 1) / 2)
+  const periodicity = 1 - Math.exp(-Math.max(0, beatPeriodicity(env, period)) / 0.15)
+  const confidence = alignment * periodicity
+  const rounded = round(tempo, 3)
   return {
-    bpm: round(tempo, 3),
-    beatOffset: round(phase / fr, 4),
-    firstDownbeat: round((phase + bar * period) / fr, 4),
+    bpm: rounded,
+    beatOffset: wrapSeconds(phase / fr, 60 / rounded),
+    firstDownbeat: wrapSeconds((phase + bar * period) / fr, 240 / rounded),
     confidence: round(confidence, 3),
   }
+}
+
+/** Mean autocorrelation of `env` (mean removed, normalized) at 1..4 beat periods, fractional lags interpolated. */
+function beatPeriodicity(env: Float32Array, period: number): number {
+  const n = env.length
+  let mean = 0
+  for (let i = 0; i < n; i++) mean += env[i]
+  mean /= n || 1
+  const at = (lag: number) => {
+    if (lag >= n) return 0
+    let s = 0
+    for (let i = 0; i + lag < n; i++) s += (env[i] - mean) * (env[i + lag] - mean)
+    return s / (n - lag)
+  }
+  const zero = at(0)
+  if (!(zero > 1e-12)) return 0
+  let total = 0
+  for (let k = 1; k <= 4; k++) {
+    const lag = k * period
+    const i = Math.floor(lag)
+    total += at(i) + (lag - i) * (at(i + 1) - at(i))
+  }
+  return total / 4 / zero
+}
+
+/** `t` rounded to 0.1 ms, kept inside [0, cycle) even where rounding would reach the cycle. */
+function wrapSeconds(t: number, cycle: number): number {
+  const r = round(t, 4)
+  return r < cycle ? Math.max(0, r) : Math.max(0, round(r - cycle, 4))
 }
 
 /**
@@ -656,12 +727,14 @@ function barFit(features: AudioFeatures, phase: number, period: number): { beat:
   const s = new Float64Array(4)
   const f = new Float64Array(4)
   const counts = new Float64Array(4)
+  const strengths = new Float64Array(beats)
   const half = 0.1 * period
   for (let b = 0; b < beats; b++) {
     const c = phase + b * period
+    strengths[b] = windowMax(full, c, half)
     k[b % 4] += windowMax(kick, c, half)
     s[b % 4] += windowMax(snare, c, half)
-    f[b % 4] += windowMax(full, c, half)
+    f[b % 4] += strengths[b]
     counts[b % 4]++
   }
   for (let m = 0; m < 4; m++) {
@@ -670,6 +743,11 @@ function barFit(features: AudioFeatures, phase: number, period: number): { beat:
     s[m] /= counts[m]
     f[m] /= counts[m]
   }
+  // Tracks usually open on a bar line, so the first strong beat breaks ties between bar
+  // phases the drums cannot tell apart (e.g. kicks on both 1 and 3).
+  const strong = 0.5 * percentile(strengths, 0.9)
+  let first = 0
+  while (first < beats - 1 && strengths[first] < strong) first++
   let beat = 0
   let fit = 0
   let bestScore = -Infinity
@@ -679,8 +757,8 @@ function barFit(features: AudioFeatures, phase: number, period: number): { beat:
     const backbeat = (K(0) + 0.5 * K(2) + S(1) + S(3) - 0.5 * (K(1) + K(3) + S(0) + S(2))) / 3.5
     const halfTime = (K(0) + S(2) - 0.5 * (K(2) + S(0))) / 2
     const match = Math.max(backbeat, halfTime)
-    // The overall onset strength on the beat only breaks near-ties.
-    const score = match + 0.03 * f[j]
+    // Only near-ties are left to the opening beat and the overall onset strength on the beat.
+    const score = match + (first % 4 === j ? FIRST_BAR_BONUS : 0) + 0.03 * f[j]
     if (score > bestScore + 1e-9) {
       bestScore = score
       beat = j

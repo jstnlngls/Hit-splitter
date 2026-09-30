@@ -42,14 +42,14 @@ function kick(out: Float32Array, at: number, gain: number) {
   }
 }
 
-/** Noise burst plus a short 200 Hz tone, decaying over ~120 ms. */
-function snare(out: Float32Array, at: number, gain: number, rand: Rand) {
+/** Noise burst plus a short tone (200 Hz by default), decaying over ~120 ms by default. */
+function snare(out: Float32Array, at: number, gain: number, rand: Rand, tone = 200, decay = 0.04) {
   const start = Math.round(at * SR)
   for (let i = 0; i < 0.2 * SR && start + i < out.length; i++) {
     const t = i / SR
-    const noise = (2 * rand() - 1) * Math.exp(-t / 0.04)
-    const tone = 0.6 * Math.sin(TAU * 200 * t) * Math.exp(-t / 0.03)
-    out[start + i] += gain * Math.min(1, t / 0.001) * (noise + tone)
+    const noise = (2 * rand() - 1) * Math.exp(-t / decay)
+    const body = 0.6 * Math.sin(TAU * tone * t) * Math.exp(-t / (0.75 * decay))
+    out[start + i] += gain * Math.min(1, t / 0.001) * (noise + body)
   }
 }
 
@@ -95,6 +95,10 @@ interface Beat {
   /** Steps with a sung syllable. */
   vocal?: number[]
   seed?: number
+  /** Hi-hat level relative to the default (which peaks about as loud as the snare). */
+  hatGain?: number
+  snareTone?: number
+  snareDecay?: number
 }
 
 function render(beat: Beat): Float32Array {
@@ -107,8 +111,8 @@ function render(beat: Beat): Float32Array {
     for (let s = 0; s < 16; s++) {
       const at = beat.offset + (bar * 16 + s) * step
       if (beat.kick?.includes(s)) kick(out, at, 0.8)
-      if (beat.snare?.includes(s)) snare(out, at, 0.45, rand)
-      if (beat.hat?.includes(s)) hat(out, at, s % 4 === 0 ? 0.5 : 0.4, rand)
+      if (beat.snare?.includes(s)) snare(out, at, 0.45, rand, beat.snareTone, beat.snareDecay)
+      if (beat.hat?.includes(s)) hat(out, at, (beat.hatGain ?? 1) * (s % 4 === 0 ? 0.5 : 0.4), rand)
       if (beat.vocal?.includes(s)) syllable(out, at, 0.3, 180 + 40 * rand())
     }
   }
@@ -242,6 +246,28 @@ describe('analyzeTrack', () => {
     for (const s of EIGHTHS) expect(hat[s]).toBeGreaterThanOrEqual(0.6)
   })
 
+  it('keeps hi-hats louder than the snare out of the snare row', { timeout: 30_000 }, () => {
+    const beat: Beat = { bpm: 92, bars: 16, offset: 0.3, kick: [0, 7, 10], snare: [4, 12], hat: EIGHTHS, hatGain: 2 }
+    const { analysis } = analyzeTrack(render({ ...beat, snareTone: 190, snareDecay: 0.015 }), SR)
+    expect(Math.abs(analysis.bpm - 92)).toBeLessThanOrEqual(0.5)
+    expect(Math.abs(analysis.firstDownbeat - 0.3)).toBeLessThanOrEqual(0.03)
+    expectHitsOnlyOn(analysis.drumPattern.kick, [0, 7, 10])
+    expectHitsOnlyOn(analysis.drumPattern.snare, [4, 12])
+    for (const s of EIGHTHS) expect(analysis.drumPattern.hat[s]).toBeGreaterThanOrEqual(0.6)
+  })
+
+  it('keeps every snare when the track has no hi-hats to subtract', { timeout: 30_000 }, () => {
+    const { analysis } = analyzeTrack(render({ bpm: 92, bars: 16, offset: 0.3, kick: [0, 7, 10], snare: [4, 12] }), SR)
+    expectHitsOnlyOn(analysis.drumPattern.kick, [0, 7, 10])
+    expectHitsOnlyOn(analysis.drumPattern.snare, [4, 12])
+  })
+
+  it('keeps hats and a vocal out of the snare row', { timeout: 30_000 }, () => {
+    const { analysis } = analyzeTrack(render({ ...BOOM_BAP, vocal: FLOW }), SR)
+    expectHitsOnlyOn(analysis.drumPattern.snare, [4, 12])
+    expectHitsOnlyOn(analysis.drumPattern.kick, [0, 10])
+  })
+
   it('reads a half-time trap beat at 140 or 70 BPM with the other octave as a candidate', { timeout: 30_000 }, () => {
     const offset = 0.21
     const { analysis } = analyzeTrack(render({ bpm: 140, bars: 16, offset, kick: [0, 3, 7], snare: [8], hat: EVERY_16TH }), SR)
@@ -256,6 +282,22 @@ describe('analyzeTrack', () => {
     // Sixteenth-note hats must not fill the snare row.
     expectHitsOnlyOn(analysis.drumPattern.snare, fast ? [8] : [4, 12])
     expect(analysis.drumPattern.kick[0]).toBeGreaterThanOrEqual(0.8)
+  })
+
+  it('keeps a full-time backbeat at 140 BPM rather than halving it, syllables on the snare included', { timeout: 30_000 }, () => {
+    const flow = [0, 3, 4, 7, 10, 12, 14]
+    const { analysis } = analyzeTrack(render({ ...BOOM_BAP, bpm: 140, offset: 0.2, vocal: flow }), SR)
+    expect(Math.abs(analysis.bpm - 140)).toBeLessThanOrEqual(0.7)
+    expect(analysis.bpmCandidates.some((c) => Math.abs(c.bpm - 70) <= 0.7)).toBe(true)
+    expect(Math.abs(analysis.firstDownbeat - 0.2)).toBeLessThanOrEqual(0.03)
+    expectHitsOnlyOn(analysis.drumPattern.snare, [4, 12])
+    expect(f1(analysis.vocalPatterns[0]?.steps ?? [], flow)).toBeGreaterThanOrEqual(0.8)
+  })
+
+  it('starts bars on the opening beat when kicks on 1 and 3 leave the bar phase ambiguous', { timeout: 30_000 }, () => {
+    const { analysis } = analyzeTrack(render({ bpm: 96, bars: 16, offset: 0.9, kick: [0, 3, 8, 10], snare: [4, 12], hat: EVERY_16TH }), SR)
+    expect(Math.abs(analysis.bpm - 96)).toBeLessThanOrEqual(0.5)
+    expect(Math.abs(analysis.firstDownbeat - 0.9)).toBeLessThanOrEqual(0.03)
   })
 
   it('pins the tempo of a long track to a few hundredths of a BPM', { timeout: 30_000 }, () => {
@@ -283,10 +325,20 @@ describe('analyzeTrack', () => {
     const noisy = render({ ...BOOM_BAP, bars: 2 })
     noisy[1000] = Number.NaN
     noisy[2000] = Number.POSITIVE_INFINITY
+    noisy[3000] = 1e30
     for (const samples of [new Float32Array(3 * SR), short, new Float32Array(0), new Float32Array(10), noisy]) {
       const { features, analysis } = analyzeTrack(samples, SR)
       expectFinite(features, analysis)
     }
+  })
+
+  it('gives little confidence to material without a steady pulse', { timeout: 30_000 }, () => {
+    const rand = prng(5)
+    const samples = new Float32Array(20 * SR)
+    for (let at = 0.2; at < 19.5; at += 0.1 + 0.3 * rand()) syllable(samples, at, 0.3, 180 + 40 * rand())
+    const { features, analysis } = analyzeTrack(samples, SR)
+    expectFinite(features, analysis)
+    expect(analysis.confidence).toBeLessThan(0.4)
   })
 
   it('analyzes a three-minute mix well within budget', { timeout: 60_000 }, () => {

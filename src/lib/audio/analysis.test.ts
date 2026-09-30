@@ -53,13 +53,17 @@ function snare(out: Float32Array, at: number, gain: number, rand: Rand) {
   }
 }
 
-/** First difference of white noise (bright), decaying over ~35 ms. */
+/**
+ * First difference of white noise, decaying with an 11 ms time constant (gone
+ * in ~35 ms). It is bright but still reaches well into the snare's range, so
+ * these hats test that hat onsets do not read as snares.
+ */
 function hat(out: Float32Array, at: number, gain: number, rand: Rand) {
   const start = Math.round(at * SR)
   let previous = 0
   for (let i = 0; i < 0.08 * SR && start + i < out.length; i++) {
     const white = 2 * rand() - 1
-    out[start + i] += 0.5 * gain * Math.exp(-i / SR / 0.012) * (white - previous)
+    out[start + i] += 0.5 * gain * Math.exp(-i / SR / 0.011) * (white - previous)
     previous = white
   }
 }
@@ -104,7 +108,7 @@ function render(beat: Beat): Float32Array {
       const at = beat.offset + (bar * 16 + s) * step
       if (beat.kick?.includes(s)) kick(out, at, 0.8)
       if (beat.snare?.includes(s)) snare(out, at, 0.45, rand)
-      if (beat.hat?.includes(s)) hat(out, at, s % 4 === 0 ? 0.3 : 0.22, rand)
+      if (beat.hat?.includes(s)) hat(out, at, s % 4 === 0 ? 0.5 : 0.4, rand)
       if (beat.vocal?.includes(s)) syllable(out, at, 0.3, 180 + 40 * rand())
     }
   }
@@ -126,6 +130,14 @@ const boomBap = memo(() => analyzeTrack(render(BOOM_BAP), SR))
 const circular = (a: number, b: number, period: number) => {
   const d = (((a - b) % period) + period) % period
   return Math.min(d, period - d)
+}
+
+/** Asserts a drum row has hits (>= 0.8) exactly on `steps` and stays <= 0.3 elsewhere. */
+function expectHitsOnlyOn(row: number[], steps: number[]) {
+  for (let s = 0; s < 16; s++) {
+    if (steps.includes(s)) expect(row[s], `step ${s}`).toBeGreaterThanOrEqual(0.8)
+    else expect(row[s], `step ${s}`).toBeLessThanOrEqual(0.3)
+  }
 }
 
 function f1(found: number[], expected: number[]) {
@@ -224,11 +236,9 @@ describe('analyzeTrack', () => {
     expect(analysis.bars).toBe(16)
     expect(analysis.confidence).toBeGreaterThan(0.5)
     const { kick, snare, hat } = analysis.drumPattern
-    expect(kick[0]).toBeGreaterThanOrEqual(0.8)
-    expect(kick[10]).toBeGreaterThanOrEqual(0.8)
-    expect(kick[4]).toBeLessThanOrEqual(0.3)
-    expect(snare[4]).toBeGreaterThanOrEqual(0.8)
-    expect(snare[12]).toBeGreaterThanOrEqual(0.8)
+    // Hats on every eighth (as loud as the snare) must not show up as snares, nor kicks as either.
+    expectHitsOnlyOn(kick, [0, 10])
+    expectHitsOnlyOn(snare, [4, 12])
     for (const s of EIGHTHS) expect(hat[s]).toBeGreaterThanOrEqual(0.6)
   })
 
@@ -243,6 +253,9 @@ describe('analyzeTrack', () => {
     // A bar at the reported tempo spans one or two identical trap bars; either way beat 1 is a trap bar start.
     expect(analysis.firstDownbeat).toBeLessThan(240 / analysis.bpm)
     expect(circular(analysis.firstDownbeat, offset, 240 / 140)).toBeLessThanOrEqual(0.03)
+    // Sixteenth-note hats must not fill the snare row.
+    expectHitsOnlyOn(analysis.drumPattern.snare, fast ? [8] : [4, 12])
+    expect(analysis.drumPattern.kick[0]).toBeGreaterThanOrEqual(0.8)
   })
 
   it('pins the tempo of a long track to a few hundredths of a BPM', { timeout: 30_000 }, () => {
@@ -255,6 +268,9 @@ describe('analyzeTrack', () => {
     const { analysis } = analyzeTrack(render({ ...BOOM_BAP, vocal: FLOW }), SR)
     expect(Math.abs(analysis.bpm - 90)).toBeLessThanOrEqual(0.5)
     expect(Math.abs(analysis.firstDownbeat - 0.37)).toBeLessThanOrEqual(0.03)
+    // Syllable onsets must not read as drum hits.
+    expectHitsOnlyOn(analysis.drumPattern.kick, [0, 10])
+    expectHitsOnlyOn(analysis.drumPattern.snare, [4, 12])
     const [top] = analysis.vocalPatterns
     expect(top).toBeDefined()
     expect(f1(top.steps, FLOW)).toBeGreaterThanOrEqual(0.8)

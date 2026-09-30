@@ -73,6 +73,8 @@ const PLAUSIBLE_MIN = 40
 const PLAUSIBLE_MAX = 240
 /** Weight of the half-beat taps in the tempo comb, relative to the beat taps. */
 const HALF_BEAT_TAP = 0.25
+/** How much better (0..1 scale) the drums must fit the double or half tempo to switch to it. */
+const OCTAVE_FIT_MARGIN = 0.15
 /** Log compression: log(1 + GAMMA·mag), with mag scaled so a full-scale sine reads 1. */
 const GAMMA = 100
 /**
@@ -84,6 +86,8 @@ const GAMMA = 100
 const ONSET_POSITION = 0.58
 const HIT = 0.35
 const ACTIVE = 0.2
+/** Upper bound on the share of hat-band onset strength removed from the snare band. */
+const MAX_HAT_SPILL = 0.45
 
 const round = (x: number, digits: number) => {
   const f = 10 ** digits
@@ -196,6 +200,23 @@ function detrend(env: Float32Array, half: number) {
   }
 }
 
+/**
+ * Removes, in place, what bright hi-hats leak into the snare envelope. The leak
+ * is the median snare/hat ratio at strong hat onsets (mostly hat-only moments,
+ * as hats outnumber snares); the cap keeps a track without hats from losing its
+ * snares to their own sizzle in the hat band.
+ */
+function removeHatSpill(snare: Float32Array, hat: Float32Array) {
+  const strong = Math.max(percentile(hat, 0.8), 1e-4)
+  const ratios: number[] = []
+  for (let c = 1; c + 1 < hat.length; c++) {
+    const h = hat[c]
+    if (h > strong && h >= hat[c - 1] && h >= hat[c + 1]) ratios.push(snare[c] / h)
+  }
+  const spill = Math.min(MAX_HAT_SPILL, percentile(ratios, 0.5))
+  if (spill > 0) for (let c = 0; c < snare.length; c++) snare[c] = Math.max(0, snare[c] - spill * hat[c])
+}
+
 /** Scales so the 99th percentile is ~1 (clamped at 1.5); `floor` keeps silence from being amplified. */
 function normalizeEnvelope(env: Float32Array, floor: number) {
   const scale = 1 / Math.max(percentile(env, 0.99), floor)
@@ -255,7 +276,9 @@ export function computeFeatures(samples: Float32Array, sampleRate: number, onPro
   const bins = Math.min(size / 2, Math.floor(11000 / binHz)) + 1
   const band = (lo: number, hi: number) => [Math.max(1, Math.ceil(lo / binHz)), Math.min(bins - 1, Math.floor(hi / binHz))]
   const [kickLo, kickHi] = band(30, 150)
-  const [snareLo, snareHi] = band(180, 4500)
+  // Snares are broadband, but below ~1 kHz kicks and voices swamp their onsets and above
+  // ~2.2 kHz bright hi-hats do, so the snare envelope listens to the band in between.
+  const [snareLo, snareHi] = band(1000, 2200)
   const [hatLo, hatHi] = band(5000, 11000)
   const [vocalLo, vocalHi] = band(250, 3500)
 
@@ -365,6 +388,7 @@ export function computeFeatures(samples: Float32Array, sampleRate: number, onPro
     if (onProgress && t % progressEvery === 0) onProgress((0.95 * t) / total)
   }
 
+  removeHatSpill(snare, hat)
   const trendHalf = Math.max(1, Math.round(0.14 * frameRate))
   for (const env of [kick, snare, hat, vocal]) {
     detrend(env, trendHalf)
@@ -474,10 +498,26 @@ export function estimateTempo(
   }
   const top = score(bpm)
 
+  // The comb rates a tempo and its double much alike; the drums tell them apart. At the right
+  // tempo kick and snare sit on the beats in a backbeat or half-time pattern, not between them.
+  const drumFit = (b: number) => {
+    const period = (60 * fr) / b
+    const { phase } = bestPhase(features.full, period)
+    return Math.max(barFit(features, phase, period).fit, barFit(features, phase + period / 2, period).fit)
+  }
+  const fit = drumFit(bpm)
+  for (const alt of [bpm * 2, bpm / 2]) {
+    if (alt >= min && alt <= max && score(alt) >= 0.3 * top && drumFit(alt) > fit + OCTAVE_FIT_MARGIN) {
+      bpm = alt
+      break
+    }
+  }
+  const ref = score(bpm)
+
   const candidates: { bpm: number; score: number }[] = [{ bpm, score: 1 }]
   const distinct = (b: number) => candidates.every((c) => Math.abs(Math.log2(c.bpm / b)) > 0.05)
   for (const alt of [bpm * 2, bpm / 2]) {
-    if (alt >= PLAUSIBLE_MIN && alt <= PLAUSIBLE_MAX && distinct(alt)) candidates.push({ bpm: alt, score: score(alt) / top })
+    if (alt >= PLAUSIBLE_MIN && alt <= PLAUSIBLE_MAX && distinct(alt)) candidates.push({ bpm: alt, score: score(alt) / ref })
   }
   // Other clear local maxima (e.g. a 3:2 feel), strongest first.
   const peaks: number[] = []
@@ -486,7 +526,7 @@ export function estimateTempo(
   for (const i of peaks) {
     if (candidates.length >= 6) break
     const b = min + i * step
-    if (scores[i] / top >= 0.3 && distinct(b)) candidates.push({ bpm: b, score: scores[i] / top })
+    if (scores[i] / ref >= 0.3 && distinct(b)) candidates.push({ bpm: b, score: scores[i] / ref })
   }
   const [first, ...rest] = candidates
   rest.sort((a, b) => b.score - a.score)
@@ -589,7 +629,7 @@ export function estimateGrid(features: AudioFeatures, bpm: number, opts: { refin
   else phase = bestPhase(env, (60 * fr) / tempo).phase
   const period = (60 * fr) / tempo
 
-  const bar = downbeatBeat(features, phase, period)
+  const bar = barFit(features, phase, period).beat
   const overall = env.length ? env.reduce((a, b) => a + b, 0) / env.length : 0
   const ratio = overall > 1e-9 ? beatMean(env, phase, period) / overall : 0
   const confidence = 1 - Math.exp(-Math.max(0, ratio - 1) / 2)
@@ -602,15 +642,16 @@ export function estimateGrid(features: AudioFeatures, bpm: number, opts: { refin
 }
 
 /**
- * Which of the 4 beats after `phase` starts a bar. Scores each choice against
- * two templates on per-beat kick/snare strengths averaged over the track:
+ * Which of the 4 beats after `phase` starts a bar, and how well the drums fit
+ * such bars (about 0..1). Per-beat kick and snare strengths, averaged over the
+ * track, are matched against two templates scaled so a perfect match scores 1:
  * backbeat (kick on 1 and a bit on 3, snare on 2 and 4) and half-time (kick on
- * 1, snare on 3), and keeps the best.
+ * 1, snare on 3).
  */
-function downbeatBeat(features: AudioFeatures, phase: number, period: number): number {
+function barFit(features: AudioFeatures, phase: number, period: number): { beat: number; fit: number } {
   const { kick, snare, full } = features
   const beats = Math.floor((kick.length - 1 - phase) / period) + 1
-  if (!(beats > 0)) return 0
+  if (!(beats > 0)) return { beat: 0, fit: 0 }
   const k = new Float64Array(4)
   const s = new Float64Array(4)
   const f = new Float64Array(4)
@@ -629,20 +670,24 @@ function downbeatBeat(features: AudioFeatures, phase: number, period: number): n
     s[m] /= counts[m]
     f[m] /= counts[m]
   }
-  let best = 0
+  let beat = 0
+  let fit = 0
   let bestScore = -Infinity
   for (let j = 0; j < 4; j++) {
     const K = (m: number) => k[(j + m) % 4]
     const S = (m: number) => s[(j + m) % 4]
-    const backbeat = K(0) - 0.5 * K(1) + 0.5 * K(2) - 0.5 * K(3) + S(1) + S(3) - 0.5 * S(0) - 0.5 * S(2)
-    const halfTime = K(0) - 0.5 * K(2) + S(2) - 0.5 * S(0)
-    const score = Math.max(backbeat, halfTime) + 0.1 * f[j]
+    const backbeat = (K(0) + 0.5 * K(2) + S(1) + S(3) - 0.5 * (K(1) + K(3) + S(0) + S(2))) / 3.5
+    const halfTime = (K(0) + S(2) - 0.5 * (K(2) + S(0))) / 2
+    const match = Math.max(backbeat, halfTime)
+    // The overall onset strength on the beat only breaks near-ties.
+    const score = match + 0.03 * f[j]
     if (score > bestScore + 1e-9) {
       bestScore = score
-      best = j
+      beat = j
+      fit = match
     }
   }
-  return best
+  return { beat, fit: Math.max(0, fit) }
 }
 
 // ---------------------------------------------------------------------------

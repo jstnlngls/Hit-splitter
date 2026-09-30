@@ -41,10 +41,6 @@ export function Header(props: HeaderProps) {
     }
   }, [open])
 
-  useEffect(() => {
-    if (!open) setConfirming(false)
-  }, [open])
-
   const act = (fn: () => void) => () => {
     fn()
     setOpen(false)
@@ -67,7 +63,16 @@ export function Header(props: HeaderProps) {
       <input id="song-title" className="song-title" value={song.title} onChange={(e) => props.onTitle(e.target.value)} placeholder="Untitled" />
       <div className="header-actions">
         <div className="menu" ref={menu}>
-          <button type="button" className="btn" aria-expanded={open} aria-haspopup="menu" onClick={() => setOpen((o) => !o)}>
+          <button
+            type="button"
+            className="btn"
+            aria-expanded={open}
+            aria-haspopup="menu"
+            onClick={() => {
+              setOpen((o) => !o)
+              setConfirming(false)
+            }}
+          >
             <Icon name="menu" /> Songs
           </button>
           {open && (

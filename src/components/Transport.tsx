@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useRef, useState } from 'react'
 import { GRID_KINDS, GRIDS, type GridKind } from '../lib/flow/grid'
 import type { FlowTemplate } from '../lib/flow/templates'
 import { Icon } from './Icon'
@@ -37,15 +37,14 @@ const TOGGLE_LABELS: [keyof PlayToggles, string, string][] = [
 
 export function Transport(props: TransportProps) {
   const { playing, bpm, grid, flow, flows, toggles } = props
-  const [draft, setDraft] = useState(String(bpm))
+  // What the writer is typing into the tempo box; null shows the song's tempo.
+  const [draft, setDraft] = useState<string | null>(null)
   const taps = useRef<number[]>([])
-
-  useEffect(() => setDraft(String(bpm)), [bpm])
 
   const commit = () => {
     const value = Number(draft)
-    if (Number.isFinite(value) && value >= 40 && value <= 240) props.onBpm(value)
-    else setDraft(String(bpm))
+    if (draft !== null && Number.isFinite(value) && value >= 40 && value <= 240) props.onBpm(value)
+    setDraft(null)
   }
 
   const tap = () => {
@@ -77,7 +76,7 @@ export function Transport(props: TransportProps) {
           <input
             id="bpm"
             inputMode="decimal"
-            value={draft}
+            value={draft ?? String(bpm)}
             onChange={(e) => setDraft(e.target.value)}
             onBlur={commit}
             onKeyDown={(e) => e.key === 'Enter' && (e.currentTarget as HTMLInputElement).blur()}

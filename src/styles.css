@@ -1378,6 +1378,7 @@ textarea {
   grid-template-columns: 3.6em repeat(16, minmax(0, 1fr));
   gap: 3px;
   align-items: center;
+  max-width: 760px;
 }
 
 .drum-machine .row-label {
@@ -1389,8 +1390,7 @@ textarea {
 }
 
 .pad {
-  aspect-ratio: 1;
-  max-width: 100%;
+  height: 26px;
   border-radius: 4px;
   background: var(--cell);
   position: relative;

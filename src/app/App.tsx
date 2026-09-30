@@ -54,8 +54,10 @@ export function App() {
   const [toggles, setToggles] = useState<PlayToggles>({ beat: true, voice: true, click: false, loop: false, follow: true })
   const [toast, setToast] = useState<string | null>(null)
   const editor = useRef<EditorHandle>(null)
-  const songRef = useRef(song)
-  songRef.current = song
+  const lyricsRef = useRef(song.lyrics)
+  useEffect(() => {
+    lyricsRef.current = song.lyrics
+  }, [song.lyrics])
 
   const analysis = useLyricsAnalysis(song.lyrics, lexicon, 4)
   const trackFlows = useMemo(() => (song.track ? flowsFromTrack(song.track.patterns) : []), [song.track])
@@ -89,7 +91,7 @@ export function App() {
 
   const onText = useCallback(
     (next: string) =>
-      updateSong(songRef.current.id, (s) => {
+      updateSong(song.id, (s) => {
         const edit = diffText(s.lyrics, next)
         if (!edit) return s
         return {
@@ -99,21 +101,21 @@ export function App() {
           lineSettings: remapLineRecord(s.lineSettings, s.lyrics, next),
         }
       }),
-    [updateSong],
+    [song.id, updateSong],
   )
 
-  const onHighlights = useCallback((list: Highlight[]) => updateSong(songRef.current.id, (s) => ({ ...s, highlights: list })), [updateSong])
+  const onHighlights = useCallback((list: Highlight[]) => updateSong(song.id, (s) => ({ ...s, highlights: list })), [song.id, updateSong])
 
   const setLineSetting = useCallback(
     (line: number, change: (setting: LineSetting) => LineSetting) =>
-      updateSong(songRef.current.id, (s) => {
+      updateSong(song.id, (s) => {
         const next = change({ ...s.lineSettings[line] })
         const settings = { ...s.lineSettings }
         if (next.flow === undefined && !next.shift) delete settings[line]
         else settings[line] = next
         return { ...s, lineSettings: settings }
       }),
-    [updateSong],
+    [song.id, updateSong],
   )
 
   const onLineFlow = useCallback(
@@ -134,7 +136,7 @@ export function App() {
     setActiveLine(line)
     // On phones, focusing the editor would pop up the keyboard over the view.
     if (matchMedia('(min-width: 1000px)').matches) {
-      const end = lineEnd(songRef.current.lyrics, line)
+      const end = lineEnd(lyricsRef.current, line)
       editor.current?.select(end, end)
     }
   }, [])
@@ -175,7 +177,9 @@ export function App() {
   }
 
   const togglePlayRef = useRef(togglePlay)
-  togglePlayRef.current = togglePlay
+  useEffect(() => {
+    togglePlayRef.current = togglePlay
+  })
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -215,10 +219,14 @@ export function App() {
   }
 
   const copyLyrics = () => {
-    navigator.clipboard?.writeText(song.lyrics).then(
+    if (!navigator.clipboard) {
+      setToast('Copying isn’t available here. Select the lyrics and copy them yourself.')
+      return
+    }
+    navigator.clipboard.writeText(song.lyrics).then(
       () => setToast('Lyrics copied'),
       () => setToast('Copying was blocked here. Select the lyrics and copy them yourself.'),
-    ) ?? setToast('Copying isn’t available here. Select the lyrics and copy them yourself.')
+    )
   }
 
   const guessed = useMemo(() => [...new Set(lyrics.words.filter((w) => w.source === 'guess').map((w) => w.norm))], [lyrics])

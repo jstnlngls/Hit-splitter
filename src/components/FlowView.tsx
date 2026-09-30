@@ -31,7 +31,7 @@ function marksBySyllable(lyrics: LyricsAnalysis, highlights: Highlight[]): Map<n
   return out
 }
 
-export function fitLabel(view: BarView): { text: string; tone: 'room' | 'fits' | 'tight' | 'over' } {
+function fitLabel(view: BarView): { text: string; tone: 'room' | 'fits' | 'tight' | 'over' } {
   const { placement, cues } = view
   const n = cues.length
   if (n === 0) return { text: 'rest bar', tone: 'room' }
@@ -186,16 +186,20 @@ export function FlowView({ analysis, barViews, highlights, flows, activeLine, pl
   const root = useRef<HTMLDivElement>(null)
   const activeBar = lyrics.lineToBar[activeLine] ?? -1
   const playingBar = playhead?.bar ?? -1
+  const playingRef = useRef(playingBar)
+  useEffect(() => {
+    playingRef.current = playingBar
+  }, [playingBar])
 
   useEffect(() => {
     if (playingBar < 0 || !follow) return
     root.current?.querySelector(`[data-bar="${playingBar}"]`)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
   }, [playingBar, follow])
 
+  // Bring the caret's bar into view when it moves, unless playback is steering.
   useEffect(() => {
-    if (activeBar < 0 || playingBar >= 0) return
+    if (activeBar < 0 || playingRef.current >= 0) return
     root.current?.querySelector(`[data-bar="${activeBar}"]`)?.scrollIntoView({ block: 'nearest' })
-    // Only when the caret moves to another bar, not on every playhead tick.
   }, [activeBar])
 
   if (!barViews.length) {

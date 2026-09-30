@@ -33,88 +33,106 @@ function infoFrom(name: string, analysis: TrackAnalysis): TrackInfo {
  * The imported track for the current song: decoded audio for playback,
  * analysis features for re-gridding, and persistence in IndexedDB.
  */
+interface TrackState {
+  songId: string
+  buffer: AudioBuffer | null
+  features: AudioFeatures | null
+  status: TrackStatus
+}
+
+const emptyState = (song: Song): TrackState => ({
+  songId: song.id,
+  buffer: null,
+  features: null,
+  status: { phase: song.track ? 'restoring' : 'none' },
+})
+
 export function useTrack(song: Song, updateSong: (id: string, update: (s: Song) => Song) => void) {
-  const [buffer, setBuffer] = useState<AudioBuffer | null>(null)
-  const [features, setFeatures] = useState<AudioFeatures | null>(null)
-  const [status, setStatus] = useState<TrackStatus>({ phase: song.track ? 'restoring' : 'none' })
+  const [state, setState] = useState<TrackState>(() => emptyState(song))
   const job = useRef(0)
-  const hasTrack = song.track !== null
+  const hasTrack = useRef(song.track !== null)
+  // State left over from another song reads as "not loaded yet" for this one.
+  const current = state.songId === song.id ? state : emptyState(song)
+
+  /** Updates the track state for one song, dropping whatever belonged to another. */
+  const patch = useCallback((songId: string, change: Partial<Omit<TrackState, 'songId'>>) => {
+    setState((prev) => ({
+      ...(prev.songId === songId ? prev : { buffer: null, features: null, status: { phase: 'none' as const } }),
+      ...change,
+      songId,
+    }))
+  }, [])
+
+  useEffect(() => {
+    hasTrack.current = song.track !== null
+  })
 
   // Reopen the saved audio when switching songs or reloading the page.
+  // Imports set their own state, so this runs on song switches only.
   useEffect(() => {
     const id = ++job.current
-    setBuffer(null)
-    setFeatures(null)
-    if (!hasTrack) {
-      setStatus({ phase: 'none' })
-      return
-    }
-    setStatus({ phase: 'restoring' })
-    loadTrack(song.id)
+    const songId = song.id
+    if (!hasTrack.current) return
+    loadTrack(songId)
       .then(async (stored) => {
         if (id !== job.current) return
         if (!stored) {
-          setStatus({ phase: 'missing', message: 'The audio for this track isn’t saved in this browser. Import it again to play along.' })
+          patch(songId, { status: { phase: 'missing', message: 'The audio for this track isn\u2019t saved in this browser. Import it again to play along.' } })
           return
         }
         const decoded = await decodeAudio(stored.blob)
         if (id !== job.current) return
-        setBuffer(decoded)
-        setFeatures(stored.features)
-        setStatus({ phase: 'ready' })
+        patch(songId, { buffer: decoded, features: stored.features, status: { phase: 'ready' } })
       })
       .catch(() => {
-        if (id === job.current) setStatus({ phase: 'error', message: 'The saved audio couldn’t be reopened. Import the file again.' })
+        if (id === job.current) patch(songId, { status: { phase: 'error', message: 'The saved audio couldn\u2019t be reopened. Import the file again.' } })
       })
-    // Only on song switch: imports set the buffer themselves.
-  }, [song.id])
+  }, [song.id, patch])
 
   const importFile = useCallback(
     async (file: File) => {
       const id = ++job.current
       const songId = song.id
-      setStatus({ phase: 'decoding' })
+      patch(songId, { buffer: null, features: null, status: { phase: 'decoding' } })
       let decoded: AudioBuffer
       try {
         decoded = await decodeAudio(file)
       } catch {
         if (id === job.current) {
-          setStatus({ phase: 'error', message: `“${file.name}” couldn’t be decoded. Try an MP3, WAV, M4A or OGG file.` })
+          patch(songId, { status: { phase: 'error', message: `\u201c${file.name}\u201d couldn\u2019t be decoded. Try an MP3, WAV, M4A or OGG file.` } })
         }
         return
       }
       if (id !== job.current) return
-      setBuffer(decoded)
-      setStatus({ phase: 'analyzing', progress: 0 })
+      patch(songId, { buffer: decoded, status: { phase: 'analyzing', progress: 0 } })
       try {
         const signal = await toAnalysisSignal(decoded, ANALYSIS_SAMPLE_RATE)
         const result = await analyzeInBackground(signal, ANALYSIS_SAMPLE_RATE, (progress) => {
-          if (id === job.current) setStatus({ phase: 'analyzing', progress })
+          if (id === job.current) patch(songId, { status: { phase: 'analyzing', progress } })
         })
         if (id !== job.current) return
-        setFeatures(result.features)
         const info = infoFrom(file.name, result.analysis)
         updateSong(songId, (s) => ({ ...s, track: info, bpm: info.detectedBpm, startBar: 1 }))
-        setStatus({ phase: 'ready' })
+        patch(songId, { features: result.features, status: { phase: 'ready' } })
         const saved = await saveTrack(songId, { blob: file, features: result.features })
         if (!saved && id === job.current) {
-          setStatus({ phase: 'ready', message: 'Analyzed. This browser won’t store the audio, so import it again after reloading.' })
+          patch(songId, { status: { phase: 'ready', message: 'Analyzed. This browser won\u2019t store the audio, so import it again after reloading.' } })
         }
       } catch {
-        if (id === job.current) setStatus({ phase: 'error', message: 'Analysis failed on this file. Try another export of the track.' })
+        if (id === job.current) patch(songId, { status: { phase: 'error', message: 'Analysis failed on this file. Try another export of the track.' } })
       }
     },
-    [song.id, updateSong],
+    [song.id, updateSong, patch],
   )
 
   const removeTrack = useCallback(() => {
     job.current++
-    setBuffer(null)
-    setFeatures(null)
-    setStatus({ phase: 'none' })
+    patch(song.id, { buffer: null, features: null, status: { phase: 'none' } })
     void deleteTrack(song.id)
     updateSong(song.id, (s) => ({ ...s, track: null, startBar: 1 }))
-  }, [song.id, updateSong])
+  }, [song.id, updateSong, patch])
+
+  const { buffer, features, status } = current
 
   /** Re-grids the track at a new tempo (from ×2, ÷2, a candidate, or typing). */
   const setTempo = useCallback(

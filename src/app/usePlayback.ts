@@ -24,7 +24,9 @@ export function usePlayback(timeline: Timeline) {
   const [playing, setPlaying] = useState(false)
   const [playhead, setPlayhead] = useState<PlayheadState | null>(null)
   const timelineRef = useRef(timeline)
-  timelineRef.current = timeline
+  useEffect(() => {
+    timelineRef.current = timeline
+  }, [timeline])
 
   const getPlayer = () => {
     if (!player.current) {

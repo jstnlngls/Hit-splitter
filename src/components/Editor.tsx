@@ -158,26 +158,31 @@ export const Editor = memo(function Editor({
     if (line !== activeLine) onCaretLine(line)
   }
 
-  let offset = 0
-  let barCounter = 0
   const lyricLines = analysis.lyrics.lines
+  // Where each line starts in the text, and the running bar number of lyric lines.
+  const layout = useMemo(() => {
+    const out: { start: number; isLyric: boolean; barNumber: number }[] = []
+    for (let i = 0, offset = 0, bars = 0; i < lines.length; offset += lines[i].length + 1, i++) {
+      const known = lyricLines[i]
+      const isLyric = lines[i].trim() !== '' && !(known && known.text === lines[i] && known.kind === 'header')
+      if (isLyric) bars++
+      out.push({ start: offset, isLyric, barNumber: bars })
+    }
+    return out
+  }, [lines, lyricLines])
 
   return (
     <div className="editor">
       <div className="backdrop" aria-hidden="true">
         {lines.map((line, i) => {
-          const start = offset
-          offset += line.length + 1
-          const known = lyricLines[i]
-          const isLyric = line.trim() !== '' && !(known && known.text === line && known.kind === 'header')
+          const { start, isLyric, barNumber } = layout[i]
           // Bar numbers and counts come from the analysis when it has caught up with this line.
-          const view = isLyric && known?.text === line ? barByLine.get(i) : undefined
-          if (isLyric) barCounter++
+          const view = isLyric && lyricLines[i]?.text === line ? barByLine.get(i) : undefined
           const segments = segmentLine(line, start, syllablesByLine.get(i) ?? [], highlights)
           return (
             <div key={i} className={i === activeLine ? 'bl is-active' : 'bl'} data-line={i}>
               <span className="gutter">
-                {isLyric && <span>{view ? view.bar.index + 1 : barCounter}</span>}
+                {isLyric && <span>{view ? view.bar.index + 1 : barNumber}</span>}
                 {view && <span className={`count ${fitClass(view)}`}>{view.cues.length}</span>}
               </span>
               {segments.map((seg, k) => (

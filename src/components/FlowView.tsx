@@ -71,6 +71,9 @@ const BarRow = memo(function BarRow({ view, partner, lyrics, sounds, marks, flow
   })
   const room = new Set(placement.template ?? [])
   const fit = fitLabel(view)
+  // While writing, mark the flow slot the next syllable would take.
+  const lastSlot = placement.slots.length ? Math.max(...placement.slots) : -1
+  const nextSlot = active && placement.template ? (placement.template.find((t) => t > lastSlot) ?? -1) : -1
   const n = view.cues.length
   const narrowCols = S === 32 ? 8 : S / 2
 
@@ -138,14 +141,17 @@ const BarRow = memo(function BarRow({ view, partner, lyrics, sounds, marks, flow
             syl && syl.stress === 1 && !syl.weak && 'is-stressed',
             mark && `is-marked is-marked-${mark}`,
             slot === nowSlot && 'is-now',
+            slot === nextSlot && 'is-next',
           ]
             .filter(Boolean)
             .join(' ')
           const title = syl
             ? `${syl.text} · ${syl.stress ? 'stressed' : 'unstressed'}${sound ? ` · rhymes on “${SOUND_INFO[sound].label}”` : ''}${mark ? ` · ${mark}` : ''}`
-            : room.has(slot)
-              ? 'Open slot in this flow'
-              : undefined
+            : slot === nextSlot
+              ? 'Your next syllable lands here'
+              : room.has(slot)
+                ? 'Open slot in this flow'
+                : undefined
           return (
             <div key={slot} className={cls} data-snd={sound ?? undefined} title={title}>
               {syl && <span className="cell-text">{syl.text}</span>}

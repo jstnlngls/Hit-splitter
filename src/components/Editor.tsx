@@ -183,7 +183,11 @@ export const Editor = memo(function Editor({
             <div key={i} className={i === activeLine ? 'bl is-active' : 'bl'} data-line={i}>
               <span className="gutter">
                 {isLyric && <span>{view ? view.bar.index + 1 : barNumber}</span>}
-                {view && <span className={`count ${fitClass(view)}`}>{view.cues.length}</span>}
+                {view && (
+                  <span className={`count ${fitClass(view)}`} title={view.placement.template ? `${view.cues.length} of ${view.placement.capacity} flow slots` : `${view.cues.length} syllables`}>
+                    {view.placement.template ? `${view.cues.length}/${view.placement.capacity}` : view.cues.length}
+                  </span>
+                )}
               </span>
               {segments.map((seg, k) => (
                 <span

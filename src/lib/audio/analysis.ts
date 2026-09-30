@@ -71,6 +71,8 @@ const PRIOR_BPM = 95
 /** Octave alternatives outside this range are not offered as candidates. */
 const PLAUSIBLE_MIN = 40
 const PLAUSIBLE_MAX = 240
+/** Weight of the half-beat taps in the tempo comb, relative to the beat taps. */
+const HALF_BEAT_TAP = 0.25
 /** Log compression: log(1 + GAMMA·mag), with mag scaled so a full-scale sine reads 1. */
 const GAMMA = 100
 /**
@@ -82,9 +84,6 @@ const GAMMA = 100
 const ONSET_POSITION = 0.58
 const HIT = 0.35
 const ACTIVE = 0.2
-
-// TEMP-DEBUG (remove before finishing)
-export const __debug = { raw: false, onsetPosition: ONSET_POSITION }
 
 const round = (x: number, digits: number) => {
   const f = 10 ** digits
@@ -265,7 +264,7 @@ export function computeFeatures(samples: Float32Array, sampleRate: number, onPro
   const spanT = 2 * halfT + 1
   const halfF = Math.max(1, Math.round((366 / binHz - 1) / 2))
   const norm = 4 / size // 2 / Σw for a periodic Hann window
-  const lead = Math.round(__debug.onsetPosition * size)
+  const lead = Math.round(ONSET_POSITION * size)
 
   const ring = new Float32Array(spanT * bins)
   const timeWindows = new Float32Array(spanT * bins)
@@ -369,7 +368,7 @@ export function computeFeatures(samples: Float32Array, sampleRate: number, onPro
   const trendHalf = Math.max(1, Math.round(0.14 * frameRate))
   for (const env of [kick, snare, hat, vocal]) {
     detrend(env, trendHalf)
-    if (!__debug.raw) normalizeEnvelope(env, 0.005)
+    normalizeEnvelope(env, 0.005)
   }
   const full = new Float32Array(frames)
   for (let i = 0; i < frames; i++) full[i] = kick[i] + snare[i] + hat[i] + 0.5 * vocal[i]
@@ -416,9 +415,15 @@ function autocorrelation(env: Float32Array, maxLag: number): Float64Array {
 }
 
 /**
- * Tempo from the autocorrelation of the full onset envelope: each tempo is
- * scored by the autocorrelation at 1..4 beat periods, weighted by a gentle
- * log-normal prior around PRIOR_BPM (one octave wide).
+ * Tempo from onset autocorrelation: each tempo is scored by the
+ * autocorrelation at 1..4 beat periods, weighted by a gentle log-normal prior
+ * around PRIOR_BPM (one octave wide).
+ *
+ * The autocorrelation is averaged over the bands rather than taken of the
+ * combined envelope, so busy 16th-note hats cannot drown out the bar-level
+ * kick/snare structure. A light tap on each half beat favours tempos whose
+ * off-beats also carry onsets, which rules out 3:2 readings (a 140 BPM beat
+ * heard at 93) that would otherwise share most of the true tempo's taps.
  */
 export function estimateTempo(
   features: AudioFeatures,
@@ -431,11 +436,22 @@ export function estimateTempo(
   if (min > max) [min, max] = [max, min]
   const fr = features.frameRate
   const lowest = Math.min(min, PLAUSIBLE_MIN)
-  const acf = autocorrelation(features.full, Math.ceil((4 * 60 * fr) / lowest) + 2)
+  const maxLag = Math.ceil((4 * 60 * fr) / lowest) + 2
+  const acf = new Float64Array(maxLag + 1)
+  const bands: [Float32Array, number][] = [
+    [features.kick, 1],
+    [features.snare, 1],
+    [features.hat, 1],
+    [features.vocal, 0.5],
+  ]
+  for (const [env, weight] of bands) {
+    const band = autocorrelation(env, maxLag)
+    for (let lag = 0; lag <= maxLag; lag++) acf[lag] += weight * band[lag]
+  }
   const score = (bpm: number) => {
     const period = (60 * fr) / bpm
     let s = 0
-    for (let k = 1; k <= 4; k++) s += interp(acf, k * period)
+    for (let k = 1; k <= 4; k++) s += interp(acf, k * period) + HALF_BEAT_TAP * interp(acf, (k - 0.5) * period)
     // The tiny prior-only term picks a sensible default when there is no periodicity at all.
     return tempoPrior(bpm) * (Math.max(0, s) + 1e-9)
   }

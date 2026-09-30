@@ -78,7 +78,21 @@ function createWindow() {
   return win
 }
 
-/** Loads the example song, imports the demo beat and reports what worked. */
+/** Page code that starts the track-analysis worker the way the app does and reports whether it answers ('ok') or why not. */
+function workerCheck() {
+  const script = fs.readdirSync(path.join(ROOT, 'assets')).find((name) => /^analysis\.worker-.+\.js$/.test(name))
+  if (!script) return `'the build has no analysis worker'`
+  return `new Promise((resolve) => {
+    const worker = new Worker(new URL(${JSON.stringify(`assets/${script}`)}, location.href), { type: 'module' })
+    const done = (result) => { worker.terminate(); resolve(result) }
+    worker.onmessage = () => done('ok')
+    worker.onerror = (event) => { event.preventDefault(); done('error: ' + (event.message || 'the worker script did not load')) }
+    worker.postMessage({ id: 1, samples: new Float32Array(22050), sampleRate: 22050 })
+    setTimeout(() => done('no answer in 15 s'), 15000)
+  }).catch((error) => 'cannot start: ' + error.message)`
+}
+
+/** Loads the example song, imports the demo beat, checks the analysis worker and reports what worked. */
 async function smokeTest(win) {
   const page = win.webContents
   const run = (code) => page.executeJavaScript(code, true)
@@ -105,12 +119,12 @@ async function smokeTest(win) {
     await run(`${button('Try a demo beat')}.click()`)
     report.track = await waitFor(`document.body.innerText.includes('detected')`, 90000)
     report.summary = await run(`document.querySelector('.track-summary')?.innerText.replace(/\\n/g, ' | ') ?? ''`)
-    report.worker = await run(`performance.getEntriesByType('resource').some((e) => e.name.includes('analysis.worker'))`)
+    report.worker = await run(workerCheck())
     fs.writeFileSync(SMOKE_SCREENSHOT, (await page.capturePage()).toPNG())
   } catch (error) {
     report.error = String(error)
   }
-  const ok = Boolean(report.dictionary && report.bars > 0 && report.track)
+  const ok = Boolean(report.dictionary && report.bars > 0 && report.track && report.worker === 'ok')
   console.log(`[smoke] ${ok ? 'PASS' : 'FAIL'} ${JSON.stringify(report)}`)
   app.exit(ok ? 0 : 1)
 }

@@ -16,6 +16,7 @@ const PATHS = {
   file: 'M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8zm0 0v5h5',
   download: 'M12 4v12m0 0-5-5m5 5 5-5M4 20h16',
   copy: 'M9 9h10v11H9zM5 15V4h10',
+  contrast: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zm0-18v18',
 } as const
 
 export type IconName = keyof typeof PATHS

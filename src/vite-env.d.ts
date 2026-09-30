@@ -5,3 +5,8 @@ declare module 'virtual:cmudict' {
   const data: string
   export default data
 }
+
+interface ImportMetaEnv {
+  /** "artifact" for the build published as a claude.ai preview. */
+  readonly VITE_TARGET?: string
+}

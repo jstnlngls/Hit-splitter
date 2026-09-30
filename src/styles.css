@@ -34,10 +34,8 @@
   --cell-ink: #1b2233;
   --schwa: #e2e6ee;
   --shadow: 0 1px 2px rgb(27 34 51 / 0.06), 0 4px 16px rgb(27 34 51 / 0.06);
-  --snd-l: 0.83;
-  --snd-c: 0.115;
-  --ul-l: 0.6;
-  --ul-c: 0.17;
+  --snd-dl: 0;
+  --ul-dl: -0.22;
 
   --font-ui: 'Archivo', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   --font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
@@ -77,10 +75,8 @@
     --cell-ink: #14161c;
     --schwa: #3a404e;
     --shadow: 0 1px 2px rgb(0 0 0 / 0.3), 0 6px 20px rgb(0 0 0 / 0.25);
-    --snd-l: 0.74;
-    --snd-c: 0.13;
-    --ul-l: 0.74;
-    --ul-c: 0.16;
+    --snd-dl: -0.07;
+    --ul-dl: -0.04;
     color-scheme: dark;
   }
 }
@@ -115,35 +111,44 @@
   --cell-ink: #14161c;
   --schwa: #3a404e;
   --shadow: 0 1px 2px rgb(0 0 0 / 0.3), 0 6px 20px rgb(0 0 0 / 0.25);
-  --snd-l: 0.74;
-  --snd-c: 0.13;
-  --ul-l: 0.74;
-  --ul-c: 0.16;
+  --snd-dl: -0.07;
+  --ul-dl: -0.04;
   color-scheme: dark;
 }
 
-/* Vowel-sound hues: every rhyming syllable is filled with its sound's color. */
+/*
+  Vowel-sound colors: every rhyming syllable is filled with its sound's color.
+  The eleven sounds rap rhymes on most get the most distinct hues; the rare
+  ones (ow, oy, oo-as-in-good) take darker shades nearby.
+*/
 [data-snd] {
-  --snd: oklch(var(--snd-l) var(--snd-c) var(--h));
-  --snd-ul: oklch(var(--ul-l) var(--ul-c) var(--h));
+  --snd: oklch(calc(var(--l) + var(--snd-dl)) var(--c) var(--h));
+  --snd-ul: oklch(calc(var(--l) + var(--ul-dl)) calc(var(--c) + 0.04) var(--h));
 }
-[data-snd='AW'] { --h: 0; }
-[data-snd='AA'] { --h: 30; }
-[data-snd='AE'] { --h: 55; }
-[data-snd='AH'] { --h: 80; }
-[data-snd='AY'] { --h: 105; }
-[data-snd='EH'] { --h: 135; }
-[data-snd='ER'] { --h: 160; }
-[data-snd='EY'] { --h: 185; }
-[data-snd='IH'] { --h: 210; }
-[data-snd='IY'] { --h: 240; }
-[data-snd='OW'] { --h: 265; }
-[data-snd='OY'] { --h: 290; }
-[data-snd='UH'] { --h: 312; }
-[data-snd='UW'] { --h: 335; }
+[data-snd='AA'] { --l: 0.8; --c: 0.14; --h: 28; }
+[data-snd='AE'] { --l: 0.84; --c: 0.13; --h: 62; }
+[data-snd='AH'] { --l: 0.91; --c: 0.15; --h: 100; }
+[data-snd='AY'] { --l: 0.87; --c: 0.17; --h: 132; }
+[data-snd='EH'] { --l: 0.8; --c: 0.13; --h: 162; }
+[data-snd='ER'] { --l: 0.77; --c: 0.06; --h: 80; }
+[data-snd='EY'] { --l: 0.84; --c: 0.11; --h: 205; }
+[data-snd='IH'] { --l: 0.78; --c: 0.11; --h: 250; }
+[data-snd='IY'] { --l: 0.74; --c: 0.14; --h: 295; }
+[data-snd='OW'] { --l: 0.8; --c: 0.14; --h: 352; }
+[data-snd='UW'] { --l: 0.86; --c: 0.1; --h: 322; }
+[data-snd='AW'] { --l: 0.7; --c: 0.11; --h: 55; }
+[data-snd='OY'] { --l: 0.68; --c: 0.15; --h: 352; }
+[data-snd='UH'] { --l: 0.7; --c: 0.08; --h: 240; }
 [data-snd='SCHWA'] {
   --snd: var(--schwa);
   --snd-ul: var(--line-strong);
+}
+
+/* Weak syllables inside a multi rhyme are grey, so they keep regular ink. */
+.cell.has-syl[data-snd='SCHWA'],
+.block[data-snd='SCHWA'],
+.scheme-letter[data-snd='SCHWA'] {
+  color: var(--ink-2);
 }
 
 *,
@@ -482,14 +487,6 @@ textarea {
   box-shadow: var(--shadow);
 }
 
-.pane-sticky {
-  position: sticky;
-  top: calc(var(--header-h, 118px) + 16px);
-  max-height: calc(100vh - var(--header-h, 118px) - 32px);
-  display: flex;
-  flex-direction: column;
-}
-
 .pane-head {
   display: flex;
   align-items: center;
@@ -613,6 +610,8 @@ textarea {
 }
 
 .editor-text {
+  position: relative;
+  z-index: 1;
   width: 100%;
   resize: none;
   overflow: hidden;
@@ -631,6 +630,8 @@ textarea {
 }
 
 .backdrop {
+  position: relative;
+  z-index: 0;
   color: transparent;
   pointer-events: none;
   user-select: none;
@@ -700,9 +701,6 @@ textarea {
   color: var(--accent);
 }
 
-.mark {
-  border-radius: 3px;
-}
 
 .mark-favorite { background: var(--hl-favorite); }
 .mark-punchline { background: var(--hl-punchline); }
@@ -1171,7 +1169,7 @@ textarea {
   right: -1px;
   bottom: -5px;
   height: 3px;
-  background: var(--span-color);
+  background: var(--ink-2);
 }
 
 .block.span-start::after {
@@ -1581,17 +1579,57 @@ textarea {
   max-width: calc(100vw - 32px);
 }
 
+/* ---------- Wide screens: one screen, two independently scrolling panes ---------- */
+
+@media (min-width: 1000px) {
+  html,
+  body {
+    overflow: hidden;
+  }
+
+  #root {
+    height: 100%;
+  }
+
+  .workspace {
+    min-height: 0;
+    grid-template-rows: minmax(0, 1fr);
+    align-items: stretch;
+  }
+
+  .pane {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+
+  .pane-scroll {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+  }
+
+  .mobile-only {
+    display: none !important;
+  }
+}
+
 /* ---------- Narrow screens ---------- */
 
 @media (max-width: 999px) {
+  .app-header {
+    position: static;
+  }
+
+  .pane-right .pane-head,
+  .transport .play-btn,
+  .transport .position {
+    display: none;
+  }
+
   .workspace {
     grid-template-columns: minmax(0, 1fr);
     padding: 12px 16px 84px;
-  }
-
-  .pane-sticky {
-    position: static;
-    max-height: none;
   }
 
   .workspace[data-view='write'] .pane-right,
@@ -1605,7 +1643,9 @@ textarea {
 
   .mobile-tabs {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(4, minmax(0, 1fr)) auto;
+    align-items: center;
+    gap: 4px;
     position: fixed;
     left: 0;
     right: 0;
@@ -1617,8 +1657,18 @@ textarea {
   }
 
   .mobile-tabs .tab {
-    padding: 10px 4px;
+    padding: 10px 2px;
     font-size: 11px;
+  }
+
+  .mobile-tabs .play-btn {
+    width: 46px;
+    height: 46px;
+    margin-left: 4px;
+  }
+
+  .bar-tools .select {
+    max-width: 116px;
   }
 
   .status-bar {
